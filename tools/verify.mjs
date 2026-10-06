@@ -2,8 +2,10 @@
 /**
  * Verifies that a Readest checkout actually carries the unlocked-build patch.
  *
- * Runs after tools/unlock.mjs and before the expensive native build, so a
- * broken patch fails in seconds instead of forty minutes.
+ * Runs after tools/unlock.mjs and before the expensive native build, so a broken
+ * patch fails in seconds instead of forty minutes. It intentionally re-derives
+ * the expected values instead of asking unlock.mjs what it did: a verifier that
+ * trusts the patcher verifies nothing.
  *
  * Usage:
  *   node tools/verify.mjs [--root <path-to-readest-checkout>]
@@ -15,6 +17,15 @@ import path from 'node:path';
 const MARKER = '[readest-unlocked]';
 const SENTINEL_GATE = `// ${MARKER} Premium gates are opened for this self-built fork.`;
 const SENTINEL_MARKER = `// ${MARKER} Build marker: identifiable from the shipped bundle.`;
+const SENTINEL_NOTICE = `{/* ${MARKER} modification notice (AGPL section 5) */}`;
+
+const REPO = process.env['READEST_UNLOCKED_REPO'] ?? 'hirofumo/readest-unlocked';
+const REPO_URL = `https://github.com/${REPO}`;
+const RELEASES_URL = `${REPO_URL}/releases/latest`;
+const RELEASE_DOWNLOAD_BASE = `${REPO_URL}/releases/latest/download`;
+const UPDATER_MANIFEST_URL = `${RELEASE_DOWNLOAD_BASE}/latest.json`;
+const UPDATER_PUBKEY =
+  'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3RDUzQjUzOTgwNUM0NjgKUldSb3hBV1lVenZWaDM2Tk02R2hGY3U1M1VzRFl6WlZrTnUxYTJmT3FxbGF3bndzTG9RWlA5UmEK';
 
 const failures = [];
 
@@ -35,6 +46,7 @@ const parseRoot = () => {
 };
 
 const read = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null);
+const lf = (text) => text.replace(/\r\n/g, '\n');
 
 const root = parseRoot();
 console.log(`[verify] checking ${root}\n`);
@@ -46,14 +58,10 @@ const access = read(accessFile);
 if (access === null) {
   fail(`missing ${accessFile}`);
 } else {
-  const normalized = access.replace(/\r\n/g, '\n');
-  if (normalized.includes(SENTINEL_GATE)) {
-    ok('access.ts carries the unlock sentinel');
-  } else {
-    fail('access.ts does not carry the unlock sentinel');
-  }
+  const normalized = lf(access);
+  if (normalized.includes(SENTINEL_GATE)) ok('access.ts carries the unlock sentinel');
+  else fail('access.ts does not carry the unlock sentinel');
 
-  // The gate must return a literal true, with no plan/subscription condition left.
   const gateStart = normalized.indexOf('export const isCustomizationAllowed');
   const gateBody = gateStart === -1 ? '' : normalized.slice(gateStart, gateStart + 400);
   if (!gateBody) {
@@ -90,16 +98,22 @@ if (confRaw === null) {
   }
   if (conf) {
     if (conf.bundle?.createUpdaterArtifacts === true) {
-      fail('bundle.createUpdaterArtifacts is still true (needs a signing key this repo has not got)');
+      ok('bundle.createUpdaterArtifacts is on (in-app updates are possible)');
     } else {
-      ok('bundle.createUpdaterArtifacts is off');
+      fail('bundle.createUpdaterArtifacts is off, so no build can ever be updated in place');
     }
 
     const endpoints = conf.plugins?.updater?.endpoints;
-    if (Array.isArray(endpoints) && endpoints.length === 0) {
-      ok('plugins.updater.endpoints is empty (official updates cannot re-lock this build)');
+    if (Array.isArray(endpoints) && endpoints.length === 1 && endpoints[0] === UPDATER_MANIFEST_URL) {
+      ok(`updater endpoints point only at this project (${UPDATER_MANIFEST_URL})`);
     } else {
-      fail(`plugins.updater.endpoints must be empty, got ${JSON.stringify(endpoints)}`);
+      fail(`plugins.updater.endpoints must be [${UPDATER_MANIFEST_URL}], got ${JSON.stringify(endpoints)}`);
+    }
+
+    if (conf.plugins?.updater?.pubkey === UPDATER_PUBKEY) {
+      ok("updater pubkey is this project's signing key");
+    } else {
+      fail("plugins.updater.pubkey is not this project's signing key");
     }
 
     if (conf.identifier === 'com.bilingify.readest') {
@@ -116,12 +130,59 @@ if (confRaw === null) {
   }
 }
 
-/* 3. build environment ------------------------------------------------------ */
+/* 3. app-level update URLs -------------------------------------------------- */
 
-for (const rel of [
-  path.join('apps', 'readest-app', '.env.local'),
-  '.env.local',
-]) {
+const constantsFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 'constants.ts');
+const constants = read(constantsFile);
+if (constants === null) {
+  fail(`missing ${constantsFile}`);
+} else {
+  const normalized = lf(constants);
+  if (/download\.readest\.com/.test(normalized)) {
+    fail('constants.ts still reaches download.readest.com; a "check for updates" would offer the official build');
+  } else {
+    ok('constants.ts reaches no upstream release host');
+  }
+  if (normalized.includes(RELEASE_DOWNLOAD_BASE)) {
+    ok('constants.ts takes updates from this project');
+  } else {
+    fail(`constants.ts does not reference ${RELEASE_DOWNLOAD_BASE}`);
+  }
+  if (normalized.includes(UPDATER_PUBKEY)) {
+    ok('constants.ts verifies artifacts with this project’s public key');
+  } else {
+    fail('constants.ts does not carry this project’s updater public key');
+  }
+  if (normalized.includes(RELEASES_URL)) {
+    ok('the download entry point opens this project’s releases');
+  } else {
+    fail(`constants.ts does not reference ${RELEASES_URL}`);
+  }
+}
+
+/* 4. the About dialog ------------------------------------------------------- */
+
+const aboutFile = path.join(root, 'apps', 'readest-app', 'src', 'components', 'AboutWindow.tsx');
+const about = read(aboutFile);
+if (about === null) {
+  fail(`missing ${aboutFile}`);
+} else {
+  const normalized = lf(about);
+  if (normalized.includes(SENTINEL_NOTICE)) {
+    ok('AboutWindow carries the modification notice');
+  } else {
+    fail('AboutWindow is missing the modification notice');
+  }
+  if (normalized.includes(REPO_URL)) {
+    ok('AboutWindow links to this project');
+  } else {
+    fail(`AboutWindow does not link to ${REPO_URL}`);
+  }
+}
+
+/* 5. build environment ------------------------------------------------------ */
+
+for (const rel of [path.join('apps', 'readest-app', '.env.local'), '.env.local']) {
   const file = path.join(root, rel);
   const content = read(file);
   if (content === null) {
@@ -129,8 +190,7 @@ for (const rel of [
     continue;
   }
   const vars = Object.fromEntries(
-    content
-      .replace(/\r\n/g, '\n')
+    lf(content)
       .split('\n')
       .map((line) => line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/))
       .filter(Boolean)
@@ -143,7 +203,7 @@ for (const rel of [
   }
 }
 
-/* 4. cosmetic patches (warnings only) -------------------------------------- */
+/* 6. cosmetic patches (warnings only) --------------------------------------- */
 
 const COSMETIC_SENTINELS = [
   [
@@ -188,4 +248,4 @@ if (failures.length) {
   for (const message of failures) console.error(`  - ${message}`);
   process.exit(1);
 }
-console.log('[verify] all checks passed: this checkout builds without premium gates');
+console.log('[verify] all checks passed: this checkout builds unlocked and updates from this project');

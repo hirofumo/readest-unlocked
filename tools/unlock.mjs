@@ -21,6 +21,21 @@ import path from 'node:path';
 
 const MARKER = '[readest-unlocked]';
 
+/**
+ * Where this build takes its updates from. The in-app updater is redirected
+ * here so a shipped build can never be offered — and silently re-locked by — an
+ * official release. Override with READEST_UNLOCKED_REPO if the repo moves.
+ */
+const REPO = process.env['READEST_UNLOCKED_REPO'] ?? 'hirofumo/readest-unlocked';
+const REPO_URL = `https://github.com/${REPO}`;
+const RELEASES_URL = `${REPO_URL}/releases/latest`;
+const RELEASE_DOWNLOAD_BASE = `${REPO_URL}/releases/latest/download`;
+const UPDATER_MANIFEST_URL = `${RELEASE_DOWNLOAD_BASE}/latest.json`;
+
+/** Public half of the key in this repository's TAURI_SIGNING_PRIVATE_KEY. */
+const UPDATER_PUBKEY =
+  'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3RDUzQjUzOTgwNUM0NjgKUldSb3hBV1lVenZWaDM2Tk02R2hGY3U1M1VzRFl6WlZrTnUxYTJmT3FxbGF3bndzTG9RWlA5UmEK';
+
 /* ------------------------------------------------------------------ helpers */
 
 const parseRoot = () => {
@@ -80,6 +95,7 @@ function replaceOnce(text, anchor, replacement, label) {
 
 const SENTINEL_GATE = `// ${MARKER} Premium gates are opened for this self-built fork.`;
 const SENTINEL_MARKER = `// ${MARKER} Build marker: identifiable from the shipped bundle.`;
+const SENTINEL_NOTICE = `{/* ${MARKER} modification notice (AGPL section 5) */}`;
 
 const GATE_ANCHOR = `export const isCustomizationAllowed = (plan: UserPlan, customizationPurchased: boolean): boolean =>
   isSelfHosted() || customizationPurchased || PREMIUM_PLANS.includes(plan);`;
@@ -127,8 +143,10 @@ function patchTauriConfig(root) {
   const { text: original, eol } = readText(file);
   let text = original;
 
-  // The official updater endpoints would offer the official release and
-  // silently re-lock this build on the next update. Drop them.
+  // Repoint the updater at this project's own signed manifest. Leaving the
+  // official endpoints in place would let the next "check for updates" install
+  // an official release, which reinstates the paywall.
+  const desiredEndpoints = `"endpoints": [\n        "${UPDATER_MANIFEST_URL}"\n      ]`;
   const endpointMatches = text.match(/"endpoints"\s*:\s*\[[^\]]*\]/g) ?? [];
   if (endpointMatches.length !== 1) {
     fail(
@@ -136,20 +154,39 @@ function patchTauriConfig(root) {
         'Upstream changed the updater config; update tools/unlock.mjs.',
     );
   }
-  if (endpointMatches[0] !== '"endpoints": []') {
-    text = text.replace(/"endpoints"\s*:\s*\[[^\]]*\]/, '"endpoints": []');
-    log('tauri.conf.json: cleared plugins.updater.endpoints');
+  if (endpointMatches[0] === desiredEndpoints) {
+    log('tauri.conf.json: updater endpoints already point at this project');
   } else {
-    log('tauri.conf.json: updater endpoints already empty');
+    text = text.replace(/"endpoints"\s*:\s*\[[^\]]*\]/, desiredEndpoints);
+    log(`tauri.conf.json: updater endpoints -> ${UPDATER_MANIFEST_URL}`);
   }
 
-  if (text.includes('"createUpdaterArtifacts": true')) {
-    text = text.replace('"createUpdaterArtifacts": true', '"createUpdaterArtifacts": false');
-    log('tauri.conf.json: createUpdaterArtifacts disabled (no signing key in this repo)');
-  } else if (text.includes('"createUpdaterArtifacts": false')) {
-    log('tauri.conf.json: createUpdaterArtifacts already disabled');
+  // The manifest's signatures are verified against this public key, so it has
+  // to be the one matching the private key held in the repository secrets.
+  const desiredPubkey = `"pubkey": "${UPDATER_PUBKEY}"`;
+  const pubkeyMatches = text.match(/"pubkey"\s*:\s*"[^"]*"/g) ?? [];
+  if (pubkeyMatches.length !== 1) {
+    fail(
+      `tauri.conf.json: expected exactly one "pubkey", found ${pubkeyMatches.length}. ` +
+        'Upstream changed the updater config; update tools/unlock.mjs.',
+    );
+  }
+  if (pubkeyMatches[0] === desiredPubkey) {
+    log("tauri.conf.json: updater pubkey is already this project's");
   } else {
-    log('tauri.conf.json: no createUpdaterArtifacts flag (Tauri default is off)');
+    text = text.replace(/"pubkey"\s*:\s*"[^"]*"/, desiredPubkey);
+    log("tauri.conf.json: updater pubkey replaced with this project's");
+  }
+
+  // Updater artifacts (and their .sig files) are what make an in-app update
+  // possible at all; the private key comes from the repository secrets.
+  if (text.includes('"createUpdaterArtifacts": true')) {
+    log('tauri.conf.json: createUpdaterArtifacts already enabled');
+  } else if (text.includes('"createUpdaterArtifacts": false')) {
+    text = text.replace('"createUpdaterArtifacts": false', '"createUpdaterArtifacts": true');
+    log('tauri.conf.json: createUpdaterArtifacts enabled');
+  } else {
+    fail('tauri.conf.json: no createUpdaterArtifacts flag; upstream changed the bundle config.');
   }
 
   if (text !== original) writeText(file, text, eol);
@@ -161,10 +198,17 @@ function patchTauriConfig(root) {
   } catch (err) {
     fail(`tauri.conf.json is not valid JSON after patching: ${err.message}`);
   }
-  if (conf.bundle?.createUpdaterArtifacts === true) fail('createUpdaterArtifacts is still true');
+  if (conf.bundle?.createUpdaterArtifacts !== true) {
+    fail('bundle.createUpdaterArtifacts must be true for in-app updates to work');
+  }
   const endpoints = conf.plugins?.updater?.endpoints;
-  if (!Array.isArray(endpoints) || endpoints.length !== 0) {
-    fail(`plugins.updater.endpoints must be an empty array, got ${JSON.stringify(endpoints)}`);
+  if (!Array.isArray(endpoints) || endpoints.length !== 1 || endpoints[0] !== UPDATER_MANIFEST_URL) {
+    fail(
+      `plugins.updater.endpoints must be [${UPDATER_MANIFEST_URL}], got ${JSON.stringify(endpoints)}`,
+    );
+  }
+  if (conf.plugins?.updater?.pubkey !== UPDATER_PUBKEY) {
+    fail("plugins.updater.pubkey is not this project's signing key");
   }
   if (conf.identifier !== 'com.bilingify.readest') {
     fail(`identifier changed unexpectedly: ${conf.identifier}`);
@@ -172,6 +216,100 @@ function patchTauriConfig(root) {
   if (conf.productName !== 'Readest') {
     fail(`productName changed unexpectedly: ${conf.productName}`);
   }
+}
+
+/* --------------------------------------------------- app-level URLs + About */
+
+/**
+ * Every URL the app uses to fetch an update, a changelog or a download page.
+ * Left as upstream ships them, "Check Update" would offer an official release
+ * and reinstate the paywall it was built to avoid.
+ */
+function patchAppConstants(root) {
+  const file = path.join(root, 'apps', 'readest-app', 'src', 'services', 'constants.ts');
+  const { text: original, eol } = readText(file);
+  let text = original;
+
+  const rewrites = [
+    {
+      label: 'update manifest base URL',
+      pattern: /const LATEST_DOWNLOAD_BASE_URL = '[^']*';/,
+      replacement: `const LATEST_DOWNLOAD_BASE_URL = '${RELEASE_DOWNLOAD_BASE}';`,
+    },
+    {
+      // No separate nightly channel is published; pointing at a file that does
+      // not exist keeps a nightly-channel client on the stable manifest instead
+      // of reaching for upstream's nightly.
+      label: 'nightly manifest URL',
+      pattern: /export const READEST_NIGHTLY_UPDATER_FILE = '[^']*';/,
+      replacement: `export const READEST_NIGHTLY_UPDATER_FILE = \`\${LATEST_DOWNLOAD_BASE_URL}/nightly.json\`;`,
+    },
+    {
+      label: 'updater public key',
+      pattern: /export const READEST_UPDATER_PUBKEY =\s*'[^']*';/,
+      replacement: `export const READEST_UPDATER_PUBKEY =\n  '${UPDATER_PUBKEY}';`,
+    },
+    {
+      label: 'download page URL',
+      pattern: /export const DOWNLOAD_READEST_URL = '[^']*';/,
+      replacement: `export const DOWNLOAD_READEST_URL = '${RELEASES_URL}';`,
+    },
+  ];
+
+  for (const { label, pattern, replacement } of rewrites) {
+    if (!pattern.test(text)) {
+      fail(`constants.ts: ${label} not found; upstream changed these URLs. Update tools/unlock.mjs.`);
+    }
+    text = text.replace(pattern, () => replacement);
+  }
+
+  if (text !== original) writeText(file, text, eol);
+
+  // The invariant that matters: nothing may still reach upstream's release host.
+  if (/download\.readest\.com/.test(text)) {
+    fail('constants.ts still references download.readest.com after patching');
+  }
+  log('constants.ts: update, changelog and download URLs point at this project');
+}
+
+/**
+ * AGPL section 5 wants a modified version to carry a prominent notice, and the
+ * About dialog is the one place a user actually reads.
+ */
+function patchAboutWindow(root) {
+  const file = path.join(root, 'apps', 'readest-app', 'src', 'components', 'AboutWindow.tsx');
+  const { text: original, eol } = readText(file);
+  if (original.includes(SENTINEL_NOTICE)) {
+    log('AboutWindow.tsx: modification notice already present');
+    return;
+  }
+
+  const anchor = `            <p className='text-neutral-content text-xs'>
+              Source code is available at{' '}
+              <Link href='https://github.com/readest/readest' className='text-blue-500 underline'>
+                GitHub
+              </Link>
+              .
+            </p>`;
+
+  if (!original.includes(anchor)) {
+    fail('AboutWindow.tsx: the source-code paragraph moved; update tools/unlock.mjs.');
+  }
+
+  const notice = `${anchor}
+            ${SENTINEL_NOTICE}
+            <p className='text-neutral-content text-xs'>
+              This is an unofficial, modified build of Readest: the premium client features are
+              unlocked, and updates come from this project&apos;s own releases instead of
+              readest.com. Patches, build recipe and the full source for the changes live at{' '}
+              <Link href='${REPO_URL}' className='text-blue-500 underline'>
+                ${REPO}
+              </Link>
+              .
+            </p>`;
+
+  writeText(file, original.replace(anchor, () => notice), eol);
+  log(`AboutWindow.tsx: added the modification notice and ${REPO_URL}`);
 }
 
 /* ------------------------------------------------- cosmetic UI (best effort) */
@@ -305,6 +443,8 @@ if (!existsSync(path.join(root, 'apps', 'readest-app'))) {
 log(`patching Readest checkout at ${root}`);
 patchAccessModule(root);
 patchTauriConfig(root);
+patchAppConstants(root);
+patchAboutWindow(root);
 const skippedCosmetic = patchCosmeticUi(root);
 writeBuildEnv(root);
 

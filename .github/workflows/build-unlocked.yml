@@ -1,8 +1,9 @@
 name: Build unlocked Readest
 
 # Follows readest/readest and publishes an unlocked build of every new upstream
-# release. The upstream source is never committed here: each run checks out the
-# tag, applies tools/unlock.mjs, and builds. See README.md.
+# release, together with the signed updater manifests the app updates itself
+# from. The upstream source is never committed here: each run checks the tag out,
+# applies tools/unlock.mjs, and builds. See README.md.
 
 on:
   schedule:
@@ -117,7 +118,11 @@ jobs:
 
           Still decided by the upstream service, not unlockable in a client build: Readest Cloud storage quota, daily AI translation quota, and the Send-to-Readest email address.
 
-          Readest is AGPL-3.0. These installers are unmodified upstream code plus the patch scripts in this repository. They are unsigned, so Windows SmartScreen and macOS Gatekeeper will warn on first launch."
+          Two Android families are published: Readest_${VERSION}_universal.apk and _arm64.apk replace the official app (same application id, keeps your library), while Readest_${VERSION}_coexist-universal.apk and _coexist-arm64.apk install alongside it (com.hirofumo.readest.unlocked, labelled Readest Unlocked, empty library).
+
+          In-app updates come from this repository: latest.json for the desktop builds and the replacing Android family, latest-coexist.json for the coexisting family.
+
+          Readest is AGPL-3.0. These installers are unmodified upstream code plus the patch scripts in this repository. They are not code-signed by a certificate, so Windows SmartScreen and macOS Gatekeeper will warn on first launch."
 
           gh release create "$TAG" \
             --title "Readest $VERSION (unlocked build)" \
@@ -125,8 +130,8 @@ jobs:
             --target "$GITHUB_SHA"
 
   # ---------------------------------------------------------------------------
-  # Desktop: one matrix leg per platform. Each leg checks out upstream, patches
-  # it, builds and uploads its own artifacts.
+  # Desktop: one matrix leg per platform. Each leg checks upstream out, patches
+  # it, builds and uploads its own artifacts plus their updater signatures.
   #
   # Android is a separate job because `matrix` is not a legal context in a
   # job-level `if` (it is evaluated before the matrix expands), and Android has
@@ -154,11 +159,20 @@ jobs:
             name: macos-universal
             release: macos
             rust_targets: x86_64-apple-darwin,aarch64-apple-darwin
-            build_args: '--target universal-apple-darwin --bundles dmg'
+            # `app` is requested explicitly: the updater artifact is the .app
+            # tarball, and asking for the dmg alone is not guaranteed to run the
+            # app bundle target that produces it.
+            build_args: '--target universal-apple-darwin --bundles app,dmg'
     runs-on: ${{ matrix.config.os }}
     timeout-minutes: 120
     permissions:
       contents: write
+    # The updater private key signs every artifact that can be updated in place,
+    # so `tauri build` needs it for all three platforms. Scoping it here keeps it
+    # out of the earlier steps that run dependency lifecycle scripts.
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     # Windows runners default to pwsh; every run script in this job is bash.
     defaults:
       run:
@@ -253,6 +267,9 @@ jobs:
         run: |
           git config user.email "ci@readest-unlocked.invalid"
           git config user.name "readest-unlocked ci"
+          # The recipe checkout sits inside this workspace; keep it out of the
+          # snapshot commit so the diff stays the patch and nothing else.
+          echo ".recipe/" >> .git/info/exclude
           git add -A
           git commit -m "chore: apply unlocked-build patch" --no-verify
 
@@ -284,7 +301,9 @@ jobs:
         if: matrix.config.release == 'windows'
         run: |
           set -euo pipefail
-          cp "$(ls target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe | head -n 1)" windows-setup.exe
+          nsis=target/x86_64-pc-windows-msvc/release/bundle/nsis
+          cp "$(ls "$nsis"/*-setup.exe | head -n 1)" windows-setup.exe
+          cp "$(ls "$nsis"/*-setup.exe.sig | head -n 1)" windows-setup.exe.sig
 
       - name: Build the portable executable (Windows)
         if: matrix.config.release == 'windows'
@@ -310,10 +329,16 @@ jobs:
         run: |
           set -euo pipefail
           mv windows-setup.exe "Readest_${VERSION}_x64-setup.exe"
+          mv windows-setup.exe.sig "Readest_${VERSION}_x64-setup.exe.sig"
           mv windows-portable.exe "Readest_${VERSION}_x64-portable.exe"
+          # The portable exe is copied out of the target dir, so it carries no
+          # signature of its own; sign it the way upstream signs its portable.
+          (cd apps/readest-app && pnpm tauri signer sign "../../Readest_${VERSION}_x64-portable.exe")
           gh release upload "$TAG" \
             "Readest_${VERSION}_x64-setup.exe" \
+            "Readest_${VERSION}_x64-setup.exe.sig" \
             "Readest_${VERSION}_x64-portable.exe" \
+            "Readest_${VERSION}_x64-portable.exe.sig" \
             --clobber
 
       - name: Upload the macOS artifacts
@@ -325,9 +350,22 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -n 1)
-          cp "$dmg" "Readest_${VERSION}_universal-unsigned.dmg"
+          bundle=target/universal-apple-darwin/release/bundle
+          cp "$(ls "$bundle"/dmg/*.dmg | head -n 1)" "Readest_${VERSION}_universal-unsigned.dmg"
           gh release upload "$TAG" "Readest_${VERSION}_universal-unsigned.dmg" --clobber
+
+          # The macOS updater artifact is the .app tarball, not the dmg.
+          tarball=$(ls "$bundle"/macos/*.app.tar.gz 2>/dev/null | head -n 1 || true)
+          if [ -z "$tarball" ]; then
+            echo "::warning::no .app.tar.gz updater archive was produced; macOS clients will not be offered updates"
+            exit 0
+          fi
+          cp "$tarball" "Readest_${VERSION}_universal.app.tar.gz"
+          cp "$tarball.sig" "Readest_${VERSION}_universal.app.tar.gz.sig"
+          gh release upload "$TAG" \
+            "Readest_${VERSION}_universal.app.tar.gz" \
+            "Readest_${VERSION}_universal.app.tar.gz.sig" \
+            --clobber
 
       - name: Upload the Linux artifacts
         if: matrix.config.release == 'linux'
@@ -338,26 +376,42 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          appimage=$(ls target/release/bundle/appimage/*.AppImage | head -n 1)
-          deb=$(ls target/release/bundle/deb/*.deb | head -n 1)
-          cp "$appimage" "Readest_${VERSION}_x86_64.AppImage"
-          cp "$deb" "Readest_${VERSION}_x86_64.deb"
+          bundle=target/release/bundle
+          cp "$(ls "$bundle"/appimage/*.AppImage | head -n 1)" "Readest_${VERSION}_x86_64.AppImage"
+          cp "$(ls "$bundle"/deb/*.deb | head -n 1)" "Readest_${VERSION}_x86_64.deb"
           gh release upload "$TAG" \
             "Readest_${VERSION}_x86_64.AppImage" \
             "Readest_${VERSION}_x86_64.deb" \
             --clobber
 
+          # The Linux updater artifact is the AppImage tarball.
+          tarball=$(ls "$bundle"/appimage/*.AppImage.tar.gz 2>/dev/null | head -n 1 || true)
+          if [ -z "$tarball" ]; then
+            echo "::warning::no .AppImage.tar.gz updater archive was produced; Linux clients will not be offered updates"
+            exit 0
+          fi
+          cp "$tarball" "Readest_${VERSION}_x86_64.AppImage.tar.gz"
+          cp "$tarball.sig" "Readest_${VERSION}_x86_64.AppImage.tar.gz.sig"
+          gh release upload "$TAG" \
+            "Readest_${VERSION}_x86_64.AppImage.tar.gz" \
+            "Readest_${VERSION}_x86_64.AppImage.tar.gz.sig" \
+            --clobber
+
   # ---------------------------------------------------------------------------
-  # Android: skipped outright until the signing secrets exist.
+  # Android: skipped outright until the signing secrets exist. Builds two
+  # families — one that replaces the official app, one that installs beside it.
   # ---------------------------------------------------------------------------
   build_android:
     name: Build android
     needs: [detect, prepare]
     if: needs.detect.outputs.build == 'true' && needs.detect.outputs.android == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
     permissions:
       contents: write
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Check out upstream Readest
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -418,11 +472,13 @@ jobs:
 
       # `pnpm tauri android init` and `icon` dirty tracked files and upstream
       # undoes that with `git checkout .`; committing first makes that restore
-      # the patch instead of reverting it.
+      # the patch (and, for the second pass below, the coexist identity) instead
+      # of reverting it.
       - name: Snapshot the patched tree
         run: |
           git config user.email "ci@readest-unlocked.invalid"
           git config user.name "readest-unlocked ci"
+          echo ".recipe/" >> .git/info/exclude
           git add -A
           git commit -m "chore: apply unlocked-build patch" --no-verify
 
@@ -432,6 +488,9 @@ jobs:
       - name: Initialize the Android project
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
         run: |
           set -euo pipefail
           cd apps/readest-app
@@ -439,33 +498,65 @@ jobs:
           pnpm tauri android init
           pnpm tauri icon ../../data/icons/readest-book.png
           git checkout .
+          cd ../..
+          bash .recipe/helpers/android-keystore.sh
 
-          pushd src-tauri/gen/android
-          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
-          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
-          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
-          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
-          popd
-
-      - name: Build the APKs
+      # Both android builds write the SAME output path: the plain build emits
+      # every ABI, the -t aarch64 build overwrites it with an arm64-only APK.
+      # Each one is staged under its own name before the next runs.
+      - name: Build the replacing APKs
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
           NODE_OPTIONS: --max-old-space-size=8192
         run: |
           set -euo pipefail
           cd apps/readest-app
-          apk_dir=src-tauri/gen/android/app/build/outputs/apk/universal/release
-          # Both builds write the SAME output path. The plain build emits every
-          # ABI; the -t aarch64 build overwrites that file with an arm64-only
-          # APK. Each one is therefore staged under its own name before the next
-          # runs, otherwise both uploads end up being whichever ran last.
+          apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
           pnpm tauri android build
-          cp "$apk_dir/app-universal-release.apk" ../../android-universal.apk
+          cp "$apk" ../../android-replace-universal.apk
           pnpm tauri android build -t aarch64
-          cp "$apk_dir/app-universal-release.apk" ../../android-arm64.apk
+          cp "$apk" ../../android-replace-arm64.apk
 
       - name: Verify the patch (built bundle)
         run: node .recipe/tools/check-bundle.mjs
+
+      # Second family: same code, its own application id and label, so it can be
+      # installed next to the official app instead of replacing it.
+      - name: Switch to the coexisting identity
+        run: |
+          set -euo pipefail
+          node .recipe/tools/coexist.mjs
+          git add -A
+          git commit -m "chore: switch to the coexisting Android identity" --no-verify
+
+      - name: Initialize the coexisting Android project
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          rm -rf src-tauri/gen/android
+          pnpm tauri android init
+          pnpm tauri icon ../../data/icons/readest-book.png
+          git checkout .
+          cd ../..
+          bash .recipe/helpers/android-keystore.sh
+
+      - name: Build the coexisting APKs
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          pnpm tauri android build
+          cp "$apk" ../../android-coexist-universal.apk
+          pnpm tauri android build -t aarch64
+          cp "$apk" ../../android-coexist-arm64.apk
 
       - name: Upload the Android artifacts
         env:
@@ -475,21 +566,98 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          mv android-universal.apk "Readest_${VERSION}_universal.apk"
-          mv android-arm64.apk "Readest_${VERSION}_arm64.apk"
+          mv android-replace-universal.apk "Readest_${VERSION}_universal.apk"
+          mv android-replace-arm64.apk "Readest_${VERSION}_arm64.apk"
+          mv android-coexist-universal.apk "Readest_${VERSION}_coexist-universal.apk"
+          mv android-coexist-arm64.apk "Readest_${VERSION}_coexist-arm64.apk"
+
           if [ "$(stat -c %s "Readest_${VERSION}_universal.apk")" = "$(stat -c %s "Readest_${VERSION}_arm64.apk")" ]; then
             echo "::error::the universal and arm64 APKs are byte-identical; the staging order regressed"
             exit 1
           fi
+          if [ "$(stat -c %s "Readest_${VERSION}_coexist-universal.apk")" = "$(stat -c %s "Readest_${VERSION}_coexist-arm64.apk")" ]; then
+            echo "::error::the coexisting universal and arm64 APKs are byte-identical; the staging order regressed"
+            exit 1
+          fi
+
+          # Tauri does not sign the APKs itself; upstream signs them explicitly
+          # and so does this workflow, because the updater verifies them.
+          cd apps/readest-app
+          for apk in "Readest_${VERSION}_universal.apk" "Readest_${VERSION}_arm64.apk" \
+                     "Readest_${VERSION}_coexist-universal.apk" "Readest_${VERSION}_coexist-arm64.apk"; do
+            pnpm tauri signer sign "../../$apk"
+          done
+          cd ../..
+
           gh release upload "$TAG" \
-            "Readest_${VERSION}_universal.apk" \
-            "Readest_${VERSION}_arm64.apk" \
+            "Readest_${VERSION}_universal.apk" "Readest_${VERSION}_universal.apk.sig" \
+            "Readest_${VERSION}_arm64.apk" "Readest_${VERSION}_arm64.apk.sig" \
+            "Readest_${VERSION}_coexist-universal.apk" "Readest_${VERSION}_coexist-universal.apk.sig" \
+            "Readest_${VERSION}_coexist-arm64.apk" "Readest_${VERSION}_coexist-arm64.apk.sig" \
             --clobber
+
+  # ---------------------------------------------------------------------------
+  # The app updates itself from these manifests, so they are assembled only once
+  # every leg has uploaded its signatures. A manifest missing a platform key
+  # means that platform is simply not offered an update, which the run summary
+  # reports.
+  # ---------------------------------------------------------------------------
+  manifest:
+    name: Publish updater manifests
+    needs: [detect, build, build_android]
+    if: needs.detect.outputs.build == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+
+      - name: Download the signature files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p sigs
+          gh release download "$TAG" --pattern '*.sig' --dir sigs --clobber
+          ls -1 sigs
+
+      - name: Build the manifests
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          node tools/make-manifest.mjs --dir sigs --version "$VERSION" --variant replace --out latest.json
+          node tools/make-manifest.mjs --dir sigs --version "$VERSION" --variant coexist --out latest-coexist.json
+
+      - name: Publish the manifests and the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          REF: ${{ needs.detect.outputs.ref }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" latest.json latest-coexist.json --clobber
+
+          # The "recent updates" view reads this file; upstream's own copy is
+          # versioned with the code, so serve that one.
+          url="https://raw.githubusercontent.com/$UPSTREAM_REPO/$REF/apps/readest-app/release-notes.json"
+          if curl -fsSL "$url" -o release-notes.json; then
+            gh release upload "$TAG" release-notes.json --clobber
+          else
+            echo "::warning::could not fetch release-notes.json from $url"
+          fi
 
   # ---------------------------------------------------------------------------
   summary:
     name: Summary
-    needs: [detect, build, build_android]
+    needs: [detect, build, build_android, manifest]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -499,6 +667,7 @@ jobs:
           BUILD: ${{ needs.detect.outputs.build }}
           DESKTOP: ${{ needs.build.result }}
           ANDROID: ${{ needs.build_android.result }}
+          MANIFEST: ${{ needs.manifest.result }}
         run: |
           {
             echo "## Result"
@@ -512,5 +681,6 @@ jobs:
               echo "| --- | --- |"
               echo "| desktop matrix | $DESKTOP |"
               echo "| android | $ANDROID |"
+              echo "| updater manifests | $MANIFEST |"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
