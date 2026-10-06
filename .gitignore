@@ -6,3 +6,9 @@ node_modules/
 # The upstream checkout used for local patch validation (see README).
 # CI checks upstream out itself and never commits it here.
 readest/
+
+# Local copy of the Android signing keystore. The authoritative copies are the
+# repository secrets; this must never be committed.
+secrets/
+*.jks
+*.keystore
