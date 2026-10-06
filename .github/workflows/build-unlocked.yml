@@ -541,8 +541,12 @@ jobs:
           rm -rf src-tauri/gen/android
           pnpm tauri android init
           pnpm tauri icon ../../data/icons/readest-book.png
+          # Upstream tracks part of gen/android, so this checkout is what keeps
+          # their Android customisations — and what puts the original package
+          # id back. The rewrite below re-points that project at this family.
           git checkout .
           cd ../..
+          node .recipe/tools/coexist-android.mjs
           bash .recipe/helpers/android-keystore.sh
 
       - name: Build the coexisting APKs
@@ -605,7 +609,11 @@ jobs:
   manifest:
     name: Publish updater manifests
     needs: [detect, build, build_android]
-    if: needs.detect.outputs.build == 'true' && needs.build.result == 'success'
+    # `always()` is required: without a status function GitHub implicitly ANDs a
+    # success() check over every needed job, so a failed Android leg would skip
+    # the manifest outright and leave the release with no update path at all.
+    # The explicit build check below is what actually gates it.
+    if: always() && needs.detect.outputs.build == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
