@@ -41,6 +41,11 @@ jobs:
   detect:
     name: Resolve upstream version
     runs-on: ubuntu-latest
+    # `secrets` is not a legal context inside a step `if`, so the availability
+    # check is materialised here as a boolean string. Only the boolean is
+    # exposed, never the secret itself.
+    env:
+      HAS_ANDROID_KEY: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
     outputs:
       build: ${{ steps.resolve.outputs.build }}
       ref: ${{ steps.resolve.outputs.ref }}
@@ -62,11 +67,12 @@ jobs:
           INPUT_FORCE: ${{ inputs.force }}
         run: node tools/resolve-upstream.mjs
 
-      # Signing secrets cannot be read by a job-level `if`, so the Android leg is
-      # gated on this step's output. Absent secrets simply skip Android.
+      # Signing secrets cannot be read by a job-level `if` either, so the
+      # Android leg is gated on this step's output. Absent secrets simply skip
+      # Android and leave the rest of the pipeline green.
       - name: Check for Android signing secrets
         id: android
-        if: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
+        if: env.HAS_ANDROID_KEY == 'true'
         run: echo "android=true" >> "$GITHUB_OUTPUT"
 
       - name: Summary
