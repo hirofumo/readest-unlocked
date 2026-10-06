@@ -333,6 +333,13 @@ jobs:
       - name: Verify the patch (sources)
         run: node .recipe/tools/verify.mjs
 
+      # 32-bit Windows only. The abandoned `battery` crate does not compile for
+      # i686 with a modern rustc, so Cargo is pointed at a vendored copy with the
+      # two offending lines fixed. See vendor/battery/README.readest-unlocked.md.
+      - name: Point Cargo at the vendored battery crate (Windows x86)
+        if: matrix.config.arch == 'x86'
+        run: node .recipe/helpers/patch-battery-crate.mjs
+
       # Snapshot the patched tree. Some upstream build steps run `git checkout .`
       # to undo generated files; committing first makes that restore the patch
       # instead of reverting it.
