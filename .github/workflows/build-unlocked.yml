@@ -639,9 +639,13 @@ jobs:
           echo "APKs produced by the split build:"
           find "$apk_dir" -name '*.apk' -print | sort
 
-          stage() { # <grep pattern> <destination>
+          # Matching has to be on the file NAME. The split build writes every
+          # APK under a directory called `universal`, so a match against the
+          # whole path made the universal APK resolve to whichever file `find`
+          # happened to list first.
+          stage() { # <file name fragment> <destination>
             local found
-            found=$(find "$apk_dir" -name '*.apk' | grep -Ei "$1" | head -n 1 || true)
+            found=$(find "$apk_dir" -name "*$1*.apk" -print | head -n 1 || true)
             if [ -z "$found" ]; then
               return 1
             fi
@@ -683,12 +687,13 @@ jobs:
             mv "android-${family}-${abi}.apk" "Readest-${VERSION}-android-${family}-${abi}.apk"
           done
 
-          # The per-ABI builds write the same path in turn, so identical sizes
-          # would mean a staging order regression rather than a real build.
+          # The universal APK carries every ABI, so it is necessarily the largest
+          # of the three. Comparing against arm64-v8a rather than testing for a
+          # stale copy is what actually catches a mis-staged universal APK.
           universal="Readest-${VERSION}-android-${family}-universal.apk"
           arm64="Readest-${VERSION}-android-${family}-arm64-v8a.apk"
-          if [ "$(stat -c %s "$universal")" = "$(stat -c %s "$arm64")" ]; then
-            echo "::error::the ${family} universal and arm64-v8a APKs are byte-identical; the staging order regressed"
+          if [ "$(stat -c %s "$universal")" -le "$(stat -c %s "$arm64")" ]; then
+            echo "::error::the ${family} universal APK is not larger than the arm64-v8a one, so it does not contain every ABI"
             exit 1
           fi
 
