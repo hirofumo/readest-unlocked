@@ -276,6 +276,16 @@ jobs:
       - name: Verify the patch (built bundle)
         run: node .recipe/tools/check-bundle.mjs
 
+      # Stage the installer before the portable rebuild below: that rebuild
+      # regenerates the same nsis output with NEXT_PUBLIC_PORTABLE_APP=true
+      # baked into the frontend, and an installed app must not carry the
+      # portable flag.
+      - name: Stage the Windows installer
+        if: matrix.config.release == 'windows'
+        run: |
+          set -euo pipefail
+          cp "$(ls target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe | head -n 1)" windows-setup.exe
+
       - name: Build the portable executable (Windows)
         if: matrix.config.release == 'windows'
         env:
@@ -286,6 +296,10 @@ jobs:
           echo "NEXT_PUBLIC_PORTABLE_APP=true" >> .env.local
           pnpm tauri build ${{ matrix.config.build_args }}
 
+      - name: Stage the Windows portable executable
+        if: matrix.config.release == 'windows'
+        run: cp target/x86_64-pc-windows-msvc/release/readest.exe windows-portable.exe
+
       - name: Upload the Windows artifacts
         if: matrix.config.release == 'windows'
         env:
@@ -295,9 +309,8 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          installer=$(ls target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe | head -n 1)
-          cp "$installer" "Readest_${VERSION}_x64-setup.exe"
-          cp target/x86_64-pc-windows-msvc/release/readest.exe "Readest_${VERSION}_x64-portable.exe"
+          mv windows-setup.exe "Readest_${VERSION}_x64-setup.exe"
+          mv windows-portable.exe "Readest_${VERSION}_x64-portable.exe"
           gh release upload "$TAG" \
             "Readest_${VERSION}_x64-setup.exe" \
             "Readest_${VERSION}_x64-portable.exe" \
@@ -441,8 +454,15 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/readest-app
+          apk_dir=src-tauri/gen/android/app/build/outputs/apk/universal/release
+          # Both builds write the SAME output path. The plain build emits every
+          # ABI; the -t aarch64 build overwrites that file with an arm64-only
+          # APK. Each one is therefore staged under its own name before the next
+          # runs, otherwise both uploads end up being whichever ran last.
           pnpm tauri android build
+          cp "$apk_dir/app-universal-release.apk" ../../android-universal.apk
           pnpm tauri android build -t aarch64
+          cp "$apk_dir/app-universal-release.apk" ../../android-arm64.apk
 
       - name: Verify the patch (built bundle)
         run: node .recipe/tools/check-bundle.mjs
@@ -455,9 +475,12 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          apk=apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
-          cp "$apk" "Readest_${VERSION}_universal.apk"
-          cp "$apk" "Readest_${VERSION}_arm64.apk"
+          mv android-universal.apk "Readest_${VERSION}_universal.apk"
+          mv android-arm64.apk "Readest_${VERSION}_arm64.apk"
+          if [ "$(stat -c %s "Readest_${VERSION}_universal.apk")" = "$(stat -c %s "Readest_${VERSION}_arm64.apk")" ]; then
+            echo "::error::the universal and arm64 APKs are byte-identical; the staging order regressed"
+            exit 1
+          fi
           gh release upload "$TAG" \
             "Readest_${VERSION}_universal.apk" \
             "Readest_${VERSION}_arm64.apk" \
