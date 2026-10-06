@@ -1,6 +1,6 @@
 # Readest 解锁版构建
 
-[English](README.md)
+[English](README.md) | 中文
 
 自动构建**解除客户端付费门控**的 [Readest](https://github.com/readest/readest)，并发布到本仓库的 Releases。
 

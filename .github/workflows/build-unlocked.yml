@@ -109,10 +109,8 @@ jobs:
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; assets will be replaced with --clobber."
-            exit 0
-          fi
-
-          NOTES="Automatically built unlocked Readest $VERSION, from $UPSTREAM_REPO at $REF.
+          else
+            NOTES="Automatically built unlocked Readest $VERSION, from $UPSTREAM_REPO at $REF.
 
           Premium client gates are disabled: third-party cloud sync (WebDAV, S3-compatible bucket, Google Drive, OneDrive, iCloud Drive), per-chapter read-aloud audio download, Audiobookshelf offline downloads, trusted-device pairing, and custom translators with your own API key. Settings also gains a Server URL entry, so the app can be pointed at a self-hosted Readest instead of the official servers.
 
@@ -122,10 +120,36 @@ jobs:
 
           Readest is AGPL-3.0. These installers are unmodified upstream code plus the patch scripts in this repository. They are not signed by a code-signing certificate, so Windows SmartScreen and macOS Gatekeeper will warn on first launch."
 
-          gh release create "$TAG" \
-            --title "Readest $VERSION (unlocked build)" \
-            --notes "$NOTES" \
-            --target "$GITHUB_SHA"
+            gh release create "$TAG" \
+              --title "Readest $VERSION (unlocked build)" \
+              --notes "$NOTES" \
+              --target "$GITHUB_SHA"
+          fi
+
+          # Keep an update path alive while this release is still being built.
+          # The app asks releases/latest/download/latest.json, and this release
+          # becomes "latest" the moment it is created — so until the manifest job
+          # uploads the new one, that URL 404s and every installed app reports an
+          # update-check error. Seeding the manifests from the previous release
+          # makes the check answer "already the latest version" in the meantime.
+          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx 'latest.json'; then
+            echo "Manifests are already published on $TAG."
+            exit 0
+          fi
+
+          previous=$(gh release list --limit 2 --json tagName --jq '.[1].tagName // empty')
+          if [ -z "$previous" ]; then
+            echo "No earlier release to seed the manifests from; the first check may report an error until this build finishes."
+            exit 0
+          fi
+
+          mkdir -p seed
+          for name in latest.json latest-coexist.json; do
+            if gh release download "$previous" --pattern "$name" --dir seed --clobber 2>/dev/null; then
+              gh release upload "$TAG" "seed/$name" --clobber
+              echo "Seeded $name from $previous"
+            fi
+          done
 
   # ---------------------------------------------------------------------------
   # Desktop: one matrix leg per platform and architecture. Each leg checks
@@ -444,11 +468,18 @@ jobs:
   # in three ABIs each.
   # ---------------------------------------------------------------------------
   build_android:
-    name: Build android
+    name: Build android (${{ matrix.family }})
     needs: [detect, prepare]
     if: needs.detect.outputs.build == 'true' && needs.detect.outputs.android == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        # The two families are the same sources built with different application
+        # ids, so they run on separate runners in parallel rather than as six
+        # Gradle builds back to back in one job.
+        family: [replace, coexist]
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 300
     permissions:
       contents: write
     env:
@@ -527,55 +558,18 @@ jobs:
       - name: Stage the pdf.js vendor assets
         run: pnpm --filter @readest/readest-app setup-vendors
 
-      - name: Initialize the Android project (replacing family)
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
-        run: |
-          set -euo pipefail
-          cd apps/readest-app
-          rm -rf src-tauri/gen/android
-          pnpm tauri android init
-          pnpm tauri icon ../../data/icons/readest-book.png
-          git checkout .
-          cd ../..
-          bash .recipe/helpers/android-keystore.sh
-
-      # Every invocation writes the SAME output path, so each ABI is staged
-      # before the next build overwrites it. After the first build the frontend
-      # output is already in place, so the remaining ones skip the rebuild.
-      - name: Build the replacing APKs
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: |
-          set -euo pipefail
-          cd apps/readest-app
-          apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
-          skip='{"build":{"beforeBuildCommand":""}}'
-          pnpm tauri android build -t aarch64
-          cp "$apk" ../../android-replace-arm64-v8a.apk
-          pnpm tauri android build -t armv7 --config "$skip"
-          cp "$apk" ../../android-replace-armeabi-v7a.apk
-          pnpm tauri android build --config "$skip"
-          cp "$apk" ../../android-replace-universal.apk
-
-      - name: Verify the patch (built bundle)
-        run: node .recipe/tools/check-bundle.mjs
-
       # Second family: same code, its own application id, so it can be installed
       # next to the official app instead of replacing it. The label stays
       # "Readest" — only the About dialog tells the two apart.
       - name: Switch to the coexisting identity
+        if: matrix.family == 'coexist'
         run: |
           set -euo pipefail
           node .recipe/tools/coexist.mjs
           git add -A
           git commit -m "chore: switch to the coexisting Android identity" --no-verify
 
-      - name: Initialize the Android project (coexisting family)
+      - name: Initialize the Android project
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -588,14 +582,20 @@ jobs:
           pnpm tauri android init
           pnpm tauri icon ../../data/icons/readest-book.png
           # Upstream tracks part of gen/android, so this checkout is what keeps
-          # their Android customisations — and what puts the original package id
-          # back. The rewrite below re-points that project at this family.
+          # their Android customisations — and, for the coexisting family, what
+          # puts the original package id back. The rewrite below re-points that
+          # committed project at the family being built.
           git checkout .
           cd ../..
-          node .recipe/tools/coexist-android.mjs
+          if [ "${{ matrix.family }}" = "coexist" ]; then
+            node .recipe/tools/coexist-android.mjs
+          fi
           bash .recipe/helpers/android-keystore.sh
 
-      - name: Build the coexisting APKs
+      # Every invocation writes the SAME output path, so each ABI is staged
+      # before the next build overwrites it. After the first build the frontend
+      # output is already in place, so the remaining ones skip the rebuild.
+      - name: Build the APKs
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
           NODE_OPTIONS: --max-old-space-size=8192
@@ -604,12 +604,16 @@ jobs:
           cd apps/readest-app
           apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
           skip='{"build":{"beforeBuildCommand":""}}'
+          family="${{ matrix.family }}"
           pnpm tauri android build -t aarch64
-          cp "$apk" ../../android-coexist-arm64-v8a.apk
+          cp "$apk" "../../android-${family}-arm64-v8a.apk"
           pnpm tauri android build -t armv7 --config "$skip"
-          cp "$apk" ../../android-coexist-armeabi-v7a.apk
+          cp "$apk" "../../android-${family}-armeabi-v7a.apk"
           pnpm tauri android build --config "$skip"
-          cp "$apk" ../../android-coexist-universal.apk
+          cp "$apk" "../../android-${family}-universal.apk"
+
+      - name: Verify the patch (built bundle)
+        run: node .recipe/tools/check-bundle.mjs
 
       - name: Upload the Android artifacts
         env:
@@ -619,39 +623,32 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          for family in replace coexist; do
-            for abi in arm64-v8a armeabi-v7a universal; do
-              mv "android-${family}-${abi}.apk" "Readest-${VERSION}-android-${family}-${abi}.apk"
-            done
+          family="${{ matrix.family }}"
+          for abi in arm64-v8a armeabi-v7a universal; do
+            mv "android-${family}-${abi}.apk" "Readest-${VERSION}-android-${family}-${abi}.apk"
           done
 
           # The per-ABI builds write the same path in turn, so identical sizes
           # would mean a staging order regression rather than a real build.
-          for family in replace coexist; do
-            universal="Readest-${VERSION}-android-${family}-universal.apk"
-            arm64="Readest-${VERSION}-android-${family}-arm64-v8a.apk"
-            if [ "$(stat -c %s "$universal")" = "$(stat -c %s "$arm64")" ]; then
-              echo "::error::the ${family} universal and arm64-v8a APKs are byte-identical; the staging order regressed"
-              exit 1
-            fi
-          done
+          universal="Readest-${VERSION}-android-${family}-universal.apk"
+          arm64="Readest-${VERSION}-android-${family}-arm64-v8a.apk"
+          if [ "$(stat -c %s "$universal")" = "$(stat -c %s "$arm64")" ]; then
+            echo "::error::the ${family} universal and arm64-v8a APKs are byte-identical; the staging order regressed"
+            exit 1
+          fi
 
           # Tauri does not sign the APKs itself; upstream signs them explicitly
           # and so does this workflow, because the updater verifies them.
           cd apps/readest-app
-          for family in replace coexist; do
-            for abi in arm64-v8a armeabi-v7a universal; do
-              pnpm tauri signer sign "../../Readest-${VERSION}-android-${family}-${abi}.apk"
-            done
+          for abi in arm64-v8a armeabi-v7a universal; do
+            pnpm tauri signer sign "../../Readest-${VERSION}-android-${family}-${abi}.apk"
           done
           cd ../..
 
           assets=()
-          for family in replace coexist; do
-            for abi in arm64-v8a armeabi-v7a universal; do
-              apk="Readest-${VERSION}-android-${family}-${abi}.apk"
-              assets+=("$apk" "$apk.sig")
-            done
+          for abi in arm64-v8a armeabi-v7a universal; do
+            apk="Readest-${VERSION}-android-${family}-${abi}.apk"
+            assets+=("$apk" "$apk.sig")
           done
           gh release upload "$TAG" "${assets[@]}" --clobber
 

@@ -285,6 +285,17 @@ function patchAboutWindow(root) {
   }
 
   const anchor = `            <p className='text-neutral-content text-xs'>
+              This software is licensed under the{' '}
+              <Link
+                href='https://www.gnu.org/licenses/agpl-3.0.html'
+                className='text-blue-500 underline'
+              >
+                GNU Affero General Public License v3.0
+              </Link>
+              . You are free to use, modify, and distribute this software under the terms of the
+              AGPL v3 license. Please see the license for more details.
+            </p>
+            <p className='text-neutral-content text-xs'>
               Source code is available at{' '}
               <Link href='https://github.com/readest/readest' className='text-blue-500 underline'>
                 GitHub
@@ -293,15 +304,30 @@ function patchAboutWindow(root) {
             </p>`;
 
   if (!original.includes(anchor)) {
-    fail('AboutWindow.tsx: the source-code paragraph moved; update tools/unlock.mjs.');
+    fail('AboutWindow.tsx: the licence and source paragraphs moved; update tools/unlock.mjs.');
   }
 
-  const notice = `${anchor}
-            ${SENTINEL_NOTICE}
+  // Upstream's licence line, its upstream-source line and this build's
+  // provenance are one statement about where the software comes from, so they
+  // read as one paragraph rather than as the original notice with a
+  // modification bolted on below it.
+  const notice = `            ${SENTINEL_NOTICE}
             <p className='text-neutral-content text-xs'>
-              This is an unofficial, modified build of Readest: the premium client features are
+              Readest is licensed under the{' '}
+              <Link
+                href='https://www.gnu.org/licenses/agpl-3.0.html'
+                className='text-blue-500 underline'
+              >
+                GNU Affero General Public License v3.0
+              </Link>
+              , and you are free to use, modify and distribute it under those terms. The upstream
+              source is at{' '}
+              <Link href='https://github.com/readest/readest' className='text-blue-500 underline'>
+                github.com/readest/readest
+              </Link>
+              . This copy is an unofficial, modified build of it: the premium client features are
               unlocked, and updates come from this project&apos;s own releases instead of
-              readest.com. Patches, build recipe and the full source for the changes live at{' '}
+              readest.com. The patches and the exact build recipe are at{' '}
               <Link href='${REPO_URL}' className='text-blue-500 underline'>
                 ${REPO}
               </Link>
@@ -309,7 +335,7 @@ function patchAboutWindow(root) {
             </p>`;
 
   writeText(file, original.replace(anchor, () => notice), eol);
-  log(`AboutWindow.tsx: added the modification notice and ${REPO_URL}`);
+  log(`AboutWindow.tsx: merged the licence, upstream source and modification notices`);
 }
 
 /* -------------------------------------------------- self-hosted server URL */

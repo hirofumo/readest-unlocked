@@ -1,6 +1,6 @@
 # Readest Unlocked Build
 
-[中文文档](README.zh-CN.md)
+English | [中文](README.zh-CN.md)
 
 An automatically built **unlocked** build of [Readest](https://github.com/readest/readest), with the premium client gates removed, published to this repository's Releases.
 
