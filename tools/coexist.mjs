@@ -130,4 +130,37 @@ const constantsFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 
   log(`updater manifest: ${MANIFEST_FILE}`);
 }
 
+/* 3. tell the two families apart where it matters --------------------------- */
+
+/**
+ * Both families ship as "Readest", so the About dialog is the only place a user
+ * can tell which one is installed. unlock.mjs has already written the generic
+ * modification notice; this adds the sentence that names the difference.
+ */
+const COEXIST_SENTINEL = `{/* ${MARKER} coexisting build notice */}`;
+
+const aboutFile = path.join(root, 'apps', 'readest-app', 'src', 'components', 'AboutWindow.tsx');
+{
+  const { text: original, eol } = readText(aboutFile);
+  if (original.includes(COEXIST_SENTINEL)) {
+    log('AboutWindow.tsx: coexisting notice already present');
+  } else {
+    const anchor = `            {/* ${MARKER} modification notice (AGPL section 5) */}`;
+    if (!original.includes(anchor)) {
+      fail(
+        'AboutWindow.tsx: the modification notice is missing, so unlock.mjs did not run first. ' +
+          'Run tools/unlock.mjs before tools/coexist.mjs.',
+      );
+    }
+    const notice = `            ${COEXIST_SENTINEL}
+            <p className='text-neutral-content text-xs'>
+              This is the coexisting build: it installs alongside the official Readest app under
+              its own application id (${IDENTIFIER}) and keeps its own library.
+            </p>
+${anchor}`;
+    writeText(aboutFile, original.replace(anchor, () => notice), eol);
+    log(`AboutWindow.tsx: added the coexisting build notice (${IDENTIFIER})`);
+  }
+}
+
 log(`done: this checkout builds the coexisting variant (${MARKER})`);
