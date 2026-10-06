@@ -660,12 +660,14 @@ jobs:
   # ---------------------------------------------------------------------------
   manifest:
     name: Publish updater manifests
-    needs: [detect, build, build_android]
+    needs: [detect, prepare, build, build_android]
     # `always()` is required: without a status function GitHub implicitly ANDs a
-    # success() check over every needed job, so a failed Android leg would skip
-    # the manifest outright and leave the release with no update path at all.
-    # The explicit build check below is what actually gates it.
-    if: always() && needs.detect.outputs.build == 'true' && needs.build.result == 'success'
+    # success() check over every needed job, so one failed platform would skip
+    # the manifest outright and leave every other platform with no update path.
+    # Gating on `prepare` is deliberate — once the release exists, the manifest
+    # is assembled from whatever signatures landed, and a platform whose
+    # signature is missing is reported rather than taking the rest down with it.
+    if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
