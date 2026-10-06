@@ -411,18 +411,26 @@ jobs:
           set -euo pipefail
           bundle=target/release/bundle
           arch="${{ matrix.config.arch }}"
-          appimage="Readest-${VERSION}-linux-${arch}.AppImage"
-          cp "$(ls "$bundle"/appimage/*.AppImage | head -n 1)" "$appimage"
-          cp "$(ls "$bundle"/deb/*.deb | head -n 1)" "Readest-${VERSION}-linux-${arch}.deb"
-          cp "$(ls "$bundle"/rpm/*.rpm | head -n 1)" "Readest-${VERSION}-linux-${arch}.rpm"
+          echo "bundle contents:"
+          find "$bundle" -maxdepth 2 -type f | sort
 
           # The Linux updater artifact is the AppImage itself, signed in place —
-          # the app downloads it, chmods it and launches it. Upstream's manifest
-          # points both linux-<arch> and linux-<arch>-appimage at that asset.
-          if [ ! -f "$appimage.sig" ]; then
-            echo "::error::no .sig next to the AppImage; this build cannot be updated in place"
+          # the app downloads it, chmods it and launches it, and upstream's
+          # manifest points both linux-<arch> and linux-<arch>-appimage at it.
+          # Tauri names the signature after the file it signed, so the pair is
+          # taken from the source path rather than looked up under the published
+          # name.
+          appimage_src=$(ls "$bundle"/appimage/*.AppImage | head -n 1)
+          if [ ! -f "$appimage_src.sig" ]; then
+            echo "::error::no signature next to $appimage_src; this build could not be updated in place"
             exit 1
           fi
+
+          appimage="Readest-${VERSION}-linux-${arch}.AppImage"
+          cp "$appimage_src" "$appimage"
+          cp "$appimage_src.sig" "$appimage.sig"
+          cp "$(ls "$bundle"/deb/*.deb | head -n 1)" "Readest-${VERSION}-linux-${arch}.deb"
+          cp "$(ls "$bundle"/rpm/*.rpm | head -n 1)" "Readest-${VERSION}-linux-${arch}.rpm"
 
           gh release upload "$TAG" \
             "$appimage" "$appimage.sig" \
