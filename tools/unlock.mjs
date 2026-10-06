@@ -16,7 +16,7 @@
  * The root defaults to $READEST_ROOT, then to the current working directory.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const MARKER = '[readest-unlocked]';
@@ -40,6 +40,10 @@ function fail(message) {
 
 function log(message) {
   console.log(`[unlock] ${message}`);
+}
+
+function warn(message) {
+  console.warn(`[unlock] WARNING: ${message}`);
 }
 
 /** Read a file as LF text, remembering the original EOL style. */
@@ -170,6 +174,75 @@ function patchTauriConfig(root) {
   }
 }
 
+/* ------------------------------------------------- cosmetic UI (best effort) */
+
+/**
+ * The upgrade entry and the premium chips are driven by the *plan* rather than
+ * by the entitlement helper, so the semantic patch does not remove them. They
+ * are purely cosmetic — the underlying controls work regardless — so a moved
+ * anchor warns instead of failing the run. Refusing to ship a working build
+ * over a stray badge would be the wrong trade.
+ */
+const COSMETIC_PATCHES = [
+  {
+    label: 'library settings upgrade entry',
+    file: ['apps', 'readest-app', 'src', 'app', 'library', 'components', 'SettingsMenu.tsx'],
+    sentinel: `{/* ${MARKER} upgrade entry hidden in this build */}`,
+    anchor: `      {user && userProfilePlan === 'free' && (
+        <MenuItem label={_('Upgrade to Readest Premium')} onClick={handleUpgrade} />
+      )}`,
+    replacement: `      {/* ${MARKER} upgrade entry hidden in this build */}
+      {false && user && userProfilePlan === 'free' && (
+        <MenuItem label={_('Upgrade to Readest Premium')} onClick={handleUpgrade} />
+      )}`,
+  },
+  {
+    label: 'read-aloud offline-audio premium chip',
+    file: [
+      'apps',
+      'readest-app',
+      'src',
+      'app',
+      'reader',
+      'components',
+      'tts',
+      'TTSPlayerSheet.tsx',
+    ],
+    sentinel: `${MARKER} entitled builds never chip this row`,
+    anchor: `  const premiumBadge =
+    !user || (userProfilePlan !== undefined && !isDownloadPremium) ? _('Premium') : undefined;`,
+    replacement: `  // ${MARKER} entitled builds never chip this row, signed in or not
+  const premiumBadge =
+    !isDownloadPremium && (!user || (userProfilePlan !== undefined && !isDownloadPremium))
+      ? _('Premium')
+      : undefined;`,
+  },
+];
+
+function patchCosmeticUi(root) {
+  const skipped = [];
+  for (const patch of COSMETIC_PATCHES) {
+    const file = path.join(root, ...patch.file);
+    const { text: original, eol } = readText(file);
+    if (original.includes(patch.sentinel)) {
+      log(`${patch.label}: already patched`);
+      continue;
+    }
+    const occurrences = original.split(patch.anchor).length - 1;
+    if (occurrences !== 1) {
+      skipped.push(patch.label);
+      warn(
+        `${patch.label}: anchor not found (${occurrences} matches); cosmetic patch skipped. ` +
+          'The feature still works, but the chip or upgrade entry may remain visible.',
+      );
+      continue;
+    }
+    writeText(file, original.replace(patch.anchor, patch.replacement), eol);
+    log(`${patch.label}: hidden`);
+  }
+  return skipped;
+}
+
 /* ----------------------------------------------------------------- patch 4 */
 
 const ENV_VARS = {
@@ -232,5 +305,20 @@ if (!existsSync(path.join(root, 'apps', 'readest-app'))) {
 log(`patching Readest checkout at ${root}`);
 patchAccessModule(root);
 patchTauriConfig(root);
+const skippedCosmetic = patchCosmeticUi(root);
 writeBuildEnv(root);
+
+if (skippedCosmetic.length) {
+  const summaryFile = process.env['GITHUB_STEP_SUMMARY'];
+  if (summaryFile) {
+    appendFileSync(
+      summaryFile,
+      `> **Cosmetic patch skipped**: ${skippedCosmetic.join(', ')}. ` +
+        'The premium features are unlocked; a badge or upgrade entry may still be visible.\n\n',
+      'utf8',
+    );
+  }
+  warn(`${skippedCosmetic.length} cosmetic patch(es) skipped — the build is still unlocked`);
+}
+
 log('done: this checkout will build without premium gates');

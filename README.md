@@ -49,11 +49,20 @@ Readest 的客户端付费功能全部经由一个判定函数（`apps/readest-a
 | `check-bundle.mjs` | 产物级断言：在 `out/` 里找到 `__READEST_UNLOCKED__` 才算数 |
 | `resolve-upstream.mjs` | 解析上游最新版本、判断是否需要重建 |
 
-补丁共三处：
+补丁分两类。
 
-1. `src/utils/access.ts` — `isCustomizationAllowed()` 恒返回 `true`，并在文件末尾写入 `__READEST_UNLOCKED__` 构建标记。
+**语义补丁 —— 锚点失配即报错，绝不产出仍被锁的包**
+
+1. `src/utils/access.ts` — `isCustomizationAllowed()` 恒返回 `true`，并在文件末尾写入 `__READEST_UNLOCKED__` 构建标记。全部六个判定函数（云同步 / 朗读离线 / ABS 离线 / 受信配对 / 自定义翻译器 / 邮件收书）都经由它。
 2. `src-tauri/tauri.conf.json` — 清空 `plugins.updater.endpoints`（**关键**：留着官方更新源的话，下一次「检查更新」会把解锁版覆盖回官方版，门控就回来了），并关闭 `createUpdaterArtifacts`（本仓库没有 Tauri 签名私钥）。
 3. 写 `.env.local` — `NEXT_PUBLIC_SELF_HOSTED=true` 等，作为上游自带解锁路径的双保险。
+
+**装饰补丁 —— 尽力而为，锚点失配只警告不阻断**
+
+4. `src/app/library/components/SettingsMenu.tsx` — 隐藏「Upgrade to Readest Premium」菜单项。
+5. `src/app/reader/components/tts/TTSPlayerSheet.tsx` — 未登录时不再给「Offline Audio」行挂 Premium 徽标。
+
+装饰补丁找不到锚点时构建照常成功，并在 Actions 摘要里标注；语义补丁找不到锚点时**整个 job 失败**——这是刻意的安全失败，宁可红叉也不要悄悄发一个被锁的包。
 
 `identifier` 与 `productName` **保持不变**（`com.bilingify.readest` / `Readest`），所以安装后会直接沿用你原有的书库、设置与阅读进度，等同替换官方版。
 
@@ -69,17 +78,17 @@ gh workflow run build-unlocked.yml --repo hirofumo/readest-unlocked
 gh workflow run build-unlocked.yml --repo hirofumo/readest-unlocked -f ref=main -f force=true
 ```
 
-### 可选：Android 签名密钥
+### Android 签名密钥（本仓库已配置）
 
-Android 默认跳过，配置以下三个仓库 Secret 后自动启用（`Settings → Secrets and variables → Actions`）：
+Android 需要一份自签名密钥；缺失时 `Build android` 这个 job 会自动跳过，其余平台不受影响。本仓库的三个 Secret 已经配好：
 
 ```
-ANDROID_KEY_ALIAS      keystore 里的别名
-ANDROID_KEY_PASSWORD   keystore 与 key 的密码
-ANDROID_KEY_BASE64     keystore 文件的 base64
+ANDROID_KEY_ALIAS      签名别名
+ANDROID_KEY_PASSWORD   密钥口令
+ANDROID_KEY_BASE64     .jks 文件的 base64
 ```
 
-生成一次并永久保存（密钥换了就无法覆盖安装）：
+本地备份在 `secrets/`（已被 git 忽略，**绝不要提交**）——丢了它，已安装的用户就无法覆盖安装新版本，只能卸载重装。重新生成（需要 JDK 的 `keytool`）：
 
 ```bash
 keytool -genkeypair -v -keystore readest-unlocked.jks -alias readest \
@@ -89,6 +98,8 @@ keytool -genkeypair -v -keystore readest-unlocked.jks -alias readest \
 # macOS / Linux 取 base64：
 base64 -w0 readest-unlocked.jks
 ```
+
+本仓库使用 JKS 格式（keytool 会建议迁移到 PKCS12，忽略该建议即可：Gradle 侧按 JKS 读取）。
 
 ### 安装提示
 

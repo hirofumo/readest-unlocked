@@ -143,6 +143,43 @@ for (const rel of [
   }
 }
 
+/* 4. cosmetic patches (warnings only) -------------------------------------- */
+
+const COSMETIC_SENTINELS = [
+  [
+    'library settings upgrade entry',
+    path.join(root, 'apps', 'readest-app', 'src', 'app', 'library', 'components', 'SettingsMenu.tsx'),
+    `{/* ${MARKER} upgrade entry hidden in this build */}`,
+  ],
+  [
+    'read-aloud offline-audio premium chip',
+    path.join(
+      root,
+      'apps',
+      'readest-app',
+      'src',
+      'app',
+      'reader',
+      'components',
+      'tts',
+      'TTSPlayerSheet.tsx',
+    ),
+    `${MARKER} entitled builds never chip this row`,
+  ],
+];
+
+const cosmeticMissing = [];
+for (const [label, file, sentinel] of COSMETIC_SENTINELS) {
+  if (read(file)?.includes(sentinel)) ok(`${label}: hidden`);
+  else cosmeticMissing.push(label);
+}
+if (cosmeticMissing.length) {
+  console.log(
+    `  warn ${cosmeticMissing.length} cosmetic patch(es) not applied: ${cosmeticMissing.join(', ')}`,
+  );
+  console.log('       (features are unlocked; a badge or upgrade entry may still be visible)');
+}
+
 /* summary ------------------------------------------------------------------- */
 
 console.log('');
