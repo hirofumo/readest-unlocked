@@ -616,11 +616,15 @@ jobs:
           fi
           bash .recipe/helpers/android-keystore.sh
 
-      # Two Gradle invocations per family: a split build for the per-ABI APKs and
-      # an unsplit one for the universal APK. `--split-per-abi` does NOT emit a
-      # universal APK — it names every per-ABI output app-universal-release.apk
-      # inside that ABI's directory, so neither the file name nor the last path
-      # segment distinguishes them.
+      # Three Gradle invocations, but only the first compiles anything: the
+      # unsplit build compiles every ABI the project targets, and the two
+      # single-target builds after it only repackage what is already compiled.
+      #
+      # Order matters, because a single-target build writes the SAME
+      # app-universal-release.apk path as the unsplit one: each result is staged
+      # before the next build overwrites it. `--split-per-abi` is deliberately
+      # not used — it emits arm64/arm/x86/x86_64 directories, costs a second full
+      # compile, and still produces no universal APK.
       - name: Build the APKs
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
@@ -629,45 +633,24 @@ jobs:
           set -euo pipefail
           cd apps/readest-app
           family="${{ matrix.family }}"
-          apk_dir=src-tauri/gen/android/app/build/outputs/apk
-          unsplit="$apk_dir/universal/release/app-universal-release.apk"
+          apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
           skip='{"build":{"beforeBuildCommand":""}}'
 
-          pnpm tauri android build --apk --split-per-abi
-          echo "APK layout after the split build:"
-          find "$apk_dir" -name '*.apk' -print | sort
+          # No -t filter: this is the build that keeps every ABI, i686 and
+          # x86_64 included, and the only one that builds the frontend.
+          pnpm tauri android build
+          cp "$apk" "../../android-${family}-universal.apk"
+          echo "staged android-${family}-universal.apk <- $apk"
 
-          # The directory is what identifies a split APK, so the ABI is matched
-          # against the whole path. This is only unsafe for the universal APK,
-          # which is why it is not staged this way.
-          stage_split() { # <abi fragment> <destination>
-            local found
-            found=$(find "$apk_dir" -name '*.apk' | grep -Ei "$1" | head -n 1 || true)
-            if [ -z "$found" ]; then
-              return 1
-            fi
-            cp "$found" "../../$2"
-            echo "staged $2 <- $found"
-          }
+          pnpm tauri android build -t aarch64 --config "$skip"
+          cp "$apk" "../../android-${family}-arm64-v8a.apk"
+          echo "staged android-${family}-arm64-v8a.apk <- $apk"
 
-          # A single-target build writes the unsplit path too, so the fallback
-          # reads that path rather than guessing from a file name.
-          build_single() { # <tauri target> <destination>
-            pnpm tauri android build -t "$1" --config "$skip"
-            cp "$unsplit" "../../$2"
-            echo "staged $2 <- $unsplit"
-          }
+          pnpm tauri android build -t armv7 --config "$skip"
+          cp "$apk" "../../android-${family}-armeabi-v7a.apk"
+          echo "staged android-${family}-armeabi-v7a.apk <- $apk"
 
-          stage_split 'arm64-v8a' "android-${family}-arm64-v8a.apk" ||
-            build_single aarch64 "android-${family}-arm64-v8a.apk"
-          stage_split 'armeabi-v7a' "android-${family}-armeabi-v7a.apk" ||
-            build_single armv7 "android-${family}-armeabi-v7a.apk"
-
-          # The universal APK carries every ABI the project targets, i686 and
-          # x86_64 included, so it is a separate unsplit build.
-          pnpm tauri android build --config "$skip"
-          cp "$unsplit" "../../android-${family}-universal.apk"
-          echo "staged android-${family}-universal.apk <- $unsplit"
+          find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print | sort
 
       - name: Verify the patch (built bundle)
         run: node .recipe/tools/check-bundle.mjs
