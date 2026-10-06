@@ -39,7 +39,7 @@
 `<V>` 是上游版本号，例如 `0.12.12`。每个 release 的 tag 是 `v<V>-unlocked`，所有产物都按 `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>` 命名：
 
 ```
-Windows   x64 / x86 / arm64        安装包 + sig、便携 zip
+Windows   x64 / arm64              安装包 + sig、便携 zip
 macOS     x64 / arm64 / universal  dmg、更新用 tarball + sig
 Linux     x64 / arm64              AppImage + sig、deb、rpm
 Android   replace / coexist        arm64-v8a、armeabi-v7a、universal（各自 + sig）
@@ -84,7 +84,7 @@ Job：
 | --- | --- |
 | detect | 解析要构建的上游版本；若该版本的 release 已存在，则整次运行直接跳过。 |
 | prepare | 先建好 release，各构建分支只需上传产物。 |
-| build | Windows（`x64`、`x86`、`arm64`）、macOS（`x64`、`arm64`、`universal`）与 Linux（`x64`、`arm64`）的矩阵。 |
+| build | Windows（`x64`、`arm64`）、macOS（`x64`、`arm64`、`universal`）与 Linux（`x64`、`arm64`）的矩阵。 |
 | build_android | 单独的 job：job 级 `if` 读不到 matrix 上下文，而且未配置签名密钥时必须整体跳过 Android。 |
 | manifest | 发布 `latest.json` 与 `latest-coexist.json`，由各分支上传的 `.sig` 文件汇总而成，并附上上游的 `release-notes.json`，供应用内「最近更新」视图使用。 |
 | summary | 汇总各分支的结果。 |

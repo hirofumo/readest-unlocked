@@ -46,12 +46,6 @@ const DESKTOP_ENTRIES = [
     asset: (v) => `Readest-${v}-windows-x64-setup.exe`,
   },
   {
-    // Tauri's updater computes `windows-i686` on a 32-bit build, the same way it
-    // computes `windows-x86_64` and `windows-aarch64`.
-    keys: ['windows-i686', 'windows-i686-nsis'],
-    asset: (v) => `Readest-${v}-windows-x86-setup.exe`,
-  },
-  {
     keys: ['windows-aarch64', 'windows-aarch64-nsis'],
     asset: (v) => `Readest-${v}-windows-arm64-setup.exe`,
   },
