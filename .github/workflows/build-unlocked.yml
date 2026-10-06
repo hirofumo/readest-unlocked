@@ -176,6 +176,13 @@ jobs:
             target: x86_64-pc-windows-msvc
             bundle_args: '--bundles nsis'
           - os: windows-latest
+            name: windows-x86
+            release: windows
+            arch: x86
+            rust_targets: i686-pc-windows-msvc
+            target: i686-pc-windows-msvc
+            bundle_args: '--bundles nsis'
+          - os: windows-latest
             name: windows-arm64
             release: windows
             arch: arm64
@@ -549,17 +556,18 @@ jobs:
 
       # `tauri android init` regenerates the Gradle project every run, so the
       # wrapper distribution and the dependency cache are what make later runs
-      # fast. Both Android legs share one key: the first to finish saves it, the
-      # other warns and carries on.
+      # fast. Both Android legs share one entry, and the key deliberately does
+      # not carry the upstream version: a per-version key would leave a stale
+      # copy behind on every release and eat into the repository's cache budget.
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ needs.detect.outputs.version }}
+          key: gradle-${{ runner.os }}
           restore-keys: |
-            gradle-${{ runner.os }}-
+            gradle-
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile --prefer-offline

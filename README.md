@@ -39,7 +39,7 @@ Not covered: the CDN hosts for webfonts and published covers, and the readest.co
 `<V>` is the upstream version, for example `0.12.12`. Each release is tagged `v<V>-unlocked`, and every asset is named `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>`:
 
 ```
-Windows   x64 / arm64              installer + sig, portable zip
+Windows   x64 / x86 / arm64        installer + sig, portable zip
 macOS     x64 / arm64 / universal  dmg, updater tarball + sig
 Linux     x64 / arm64              AppImage + sig, deb, rpm
 Android   replace / coexist        arm64-v8a, armeabi-v7a, universal (each + sig)
@@ -84,7 +84,7 @@ Jobs:
 | --- | --- |
 | detect | Resolves which upstream version to build, and skips the whole run when a release for that version already exists. |
 | prepare | Creates the release, so the build legs only have to upload assets. |
-| build | A matrix over Windows (`x64`, `arm64`), macOS (`x64`, `arm64`, `universal`) and Linux (`x64`, `arm64`). |
+| build | A matrix over Windows (`x64`, `x86`, `arm64`), macOS (`x64`, `arm64`, `universal`) and Linux (`x64`, `arm64`). |
 | build_android | A separate job, because a job-level `if` cannot read the matrix context and Android has to be skipped outright when the signing secrets are not configured. |
 | manifest | Publishes `latest.json` and `latest-coexist.json`, assembled from the `.sig` files every leg uploaded, plus upstream's `release-notes.json` for the in-app "recent updates" view. |
 | summary | Reports the result of every leg. |
