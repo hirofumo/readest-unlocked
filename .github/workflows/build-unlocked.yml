@@ -475,18 +475,21 @@ jobs:
   # in three ABIs each.
   # ---------------------------------------------------------------------------
   build_android:
-    name: Build android (${{ matrix.family }})
+    name: Build android (${{ matrix.family }}, ${{ matrix.variant }})
     needs: [detect, prepare]
     if: needs.detect.outputs.build == 'true' && needs.detect.outputs.android == 'true'
     strategy:
       fail-fast: false
       matrix:
-        # The two families are the same sources built with different application
-        # ids, so they run on separate runners in parallel rather than as six
-        # Gradle builds back to back in one job.
+        # One job per artifact. The two families are the same sources with
+        # different application ids, and the three APKs are independent Gradle
+        # builds. The universal APK compiles every ABI and is the long pole; the
+        # single-ABI ones finish in roughly half the time beside it, where
+        # running all three in one job made each leg wait for the sum of them.
         family: [replace, coexist]
+        variant: [universal, arm64-v8a, armeabi-v7a]
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 180
     permissions:
       contents: write
     env:
@@ -616,46 +619,34 @@ jobs:
           fi
           bash .recipe/helpers/android-keystore.sh
 
-      # Three Gradle invocations, but only the first compiles anything: the
-      # unsplit build compiles every ABI the project targets, and the two
-      # single-target builds after it only repackage what is already compiled.
-      #
-      # Order matters, because a single-target build writes the SAME
-      # app-universal-release.apk path as the unsplit one: each result is staged
-      # before the next build overwrites it. `--split-per-abi` is deliberately
-      # not used — it emits arm64/arm/x86/x86_64 directories, costs a second full
-      # compile, and still produces no universal APK.
-      - name: Build the APKs
+      # One build per job. The universal variant is the only one that compiles
+      # every ABI — a single-target build repackages what the Rust build already
+      # produced for that ABI. All of them write the same
+      # app-universal-release.apk path, which is why each job reads it straight
+      # after its own build.
+      - name: Build the APK
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
           NODE_OPTIONS: --max-old-space-size=8192
         run: |
           set -euo pipefail
           cd apps/readest-app
-          family="${{ matrix.family }}"
           apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
-          skip='{"build":{"beforeBuildCommand":""}}'
 
-          # No -t filter: this is the build that keeps every ABI, i686 and
-          # x86_64 included, and the only one that builds the frontend.
-          pnpm tauri android build
-          cp "$apk" "../../android-${family}-universal.apk"
-          echo "staged android-${family}-universal.apk <- $apk"
+          case "${{ matrix.variant }}" in
+            universal)   pnpm tauri android build ;;
+            arm64-v8a)   pnpm tauri android build -t aarch64 ;;
+            armeabi-v7a) pnpm tauri android build -t armv7 ;;
+            *) echo "::error::unknown variant ${{ matrix.variant }}"; exit 1 ;;
+          esac
 
-          pnpm tauri android build -t aarch64 --config "$skip"
-          cp "$apk" "../../android-${family}-arm64-v8a.apk"
-          echo "staged android-${family}-arm64-v8a.apk <- $apk"
-
-          pnpm tauri android build -t armv7 --config "$skip"
-          cp "$apk" "../../android-${family}-armeabi-v7a.apk"
-          echo "staged android-${family}-armeabi-v7a.apk <- $apk"
-
-          find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -print | sort
+          cp "$apk" "../../android-${{ matrix.family }}-${{ matrix.variant }}.apk"
+          echo "staged android-${{ matrix.family }}-${{ matrix.variant }}.apk <- $apk"
 
       - name: Verify the patch (built bundle)
         run: node .recipe/tools/check-bundle.mjs
 
-      - name: Upload the Android artifacts
+      - name: Upload the Android artifact
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -664,34 +655,31 @@ jobs:
         run: |
           set -euo pipefail
           family="${{ matrix.family }}"
-          for abi in arm64-v8a armeabi-v7a universal; do
-            mv "android-${family}-${abi}.apk" "Readest-${VERSION}-android-${family}-${abi}.apk"
-          done
+          variant="${{ matrix.variant }}"
+          apk="Readest-${VERSION}-android-${family}-${variant}.apk"
+          mv "android-${family}-${variant}.apk" "$apk"
 
-          # The universal APK carries every ABI, so it is necessarily the largest
-          # of the three. Comparing against arm64-v8a rather than testing for a
-          # stale copy is what actually catches a mis-staged universal APK.
-          universal="Readest-${VERSION}-android-${family}-universal.apk"
-          arm64="Readest-${VERSION}-android-${family}-arm64-v8a.apk"
-          if [ "$(stat -c %s "$universal")" -le "$(stat -c %s "$arm64")" ]; then
-            echo "::error::the ${family} universal APK is not larger than the arm64-v8a one, so it does not contain every ABI"
+          # Read the ABIs out of the APK rather than trusting its name or size.
+          # A wrong-variant or mis-staged APK used to be publishable because
+          # nothing looked inside the file.
+          abis=$(unzip -l "$apk" | grep -oE 'lib/[^/]+/' | sed 's#lib/##; s#/##' | sort -u | tr '\n' ' ')
+          echo "ABIs in $apk: ${abis:-none}"
+          if [ "$variant" = 'universal' ]; then
+            for want in arm64-v8a armeabi-v7a x86 x86_64; do
+              case " $abis " in
+                *" $want "*) ;;
+                *) echo "::error::$apk does not contain $want"; exit 1 ;;
+              esac
+            done
+          elif [ "$abis" != "$variant " ]; then
+            echo "::error::$apk should contain only $variant, found: ${abis:-none}"
             exit 1
           fi
 
           # Tauri does not sign the APKs itself; upstream signs them explicitly
           # and so does this workflow, because the updater verifies them.
-          cd apps/readest-app
-          for abi in arm64-v8a armeabi-v7a universal; do
-            pnpm tauri signer sign "../../Readest-${VERSION}-android-${family}-${abi}.apk"
-          done
-          cd ../..
-
-          assets=()
-          for abi in arm64-v8a armeabi-v7a universal; do
-            apk="Readest-${VERSION}-android-${family}-${abi}.apk"
-            assets+=("$apk" "$apk.sig")
-          done
-          gh release upload "$TAG" "${assets[@]}" --clobber
+          (cd apps/readest-app && pnpm tauri signer sign "../../$apk")
+          gh release upload "$TAG" "$apk" "$apk.sig" --clobber
 
   # ---------------------------------------------------------------------------
   # The app updates itself from these manifests, so they are assembled only once
