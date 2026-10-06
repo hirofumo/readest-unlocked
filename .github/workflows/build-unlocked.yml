@@ -67,9 +67,6 @@ jobs:
           INPUT_FORCE: ${{ inputs.force }}
         run: node tools/resolve-upstream.mjs
 
-      # Signing secrets cannot be read by a job-level `if` either, so the
-      # Android leg is gated on this step's output. Absent secrets simply skip
-      # Android and leave the rest of the pipeline green.
       - name: Check for Android signing secrets
         id: android
         if: env.HAS_ANDROID_KEY == 'true'
@@ -82,15 +79,15 @@ jobs:
             echo ""
             echo "| field | value |"
             echo "| --- | --- |"
-            echo "| upstream ref | \`${{ steps.resolve.outputs.ref }}\` |"
-            echo "| version | \`${{ steps.resolve.outputs.version }}\` |"
-            echo "| release tag | \`${{ steps.resolve.outputs.tag }}\` |"
-            echo "| build needed | \`${{ steps.resolve.outputs.build }}\` |"
-            echo "| android enabled | \`${{ steps.android.outputs.android == 'true' }}\` |"
+            echo "| upstream ref | ${{ steps.resolve.outputs.ref }} |"
+            echo "| version | ${{ steps.resolve.outputs.version }} |"
+            echo "| release tag | ${{ steps.resolve.outputs.tag }} |"
+            echo "| build needed | ${{ steps.resolve.outputs.build }} |"
+            echo "| android enabled | ${{ steps.android.outputs.android == 'true' }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
-  # Create the release up front so every matrix leg only has to upload assets.
+  # Create the release up front so every build leg only has to upload assets.
   # ---------------------------------------------------------------------------
   prepare:
     name: Prepare the release
@@ -128,15 +125,17 @@ jobs:
             --target "$GITHUB_SHA"
 
   # ---------------------------------------------------------------------------
-  # One matrix leg per platform. Each leg checks out upstream, patches it, builds
-  # and uploads its own artifacts.
+  # Desktop: one matrix leg per platform. Each leg checks out upstream, patches
+  # it, builds and uploads its own artifacts.
+  #
+  # Android is a separate job because `matrix` is not a legal context in a
+  # job-level `if` (it is evaluated before the matrix expands), and Android has
+  # to be skipped outright when no signing secrets are configured.
   # ---------------------------------------------------------------------------
   build:
     name: Build ${{ matrix.config.name }}
     needs: [detect, prepare]
-    if: |
-      needs.detect.outputs.build == 'true' &&
-      (matrix.config.release != 'android' || needs.detect.outputs.android == 'true')
+    if: needs.detect.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -146,11 +145,6 @@ jobs:
             release: windows
             rust_targets: x86_64-pc-windows-msvc
             build_args: '--target x86_64-pc-windows-msvc --bundles nsis'
-          - os: ubuntu-latest
-            name: android
-            release: android
-            rust_targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
-            build_args: ''
           - os: ubuntu-22.04
             name: linux-x86_64
             release: linux
@@ -162,7 +156,7 @@ jobs:
             rust_targets: x86_64-apple-darwin,aarch64-apple-darwin
             build_args: '--target universal-apple-darwin --bundles dmg'
     runs-on: ${{ matrix.config.os }}
-    timeout-minutes: ${{ matrix.config.release == 'android' && 150 || 120 }}
+    timeout-minutes: 120
     permissions:
       contents: write
     steps:
@@ -188,23 +182,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-
-      - name: Set up Java (Android)
-        if: matrix.config.release == 'android'
-        uses: actions/setup-java@v4
-        with:
-          distribution: zulu
-          java-version: '17'
-
-      - name: Set up the Android SDK (Android)
-        if: matrix.config.release == 'android'
-        uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
-
-      - name: Install the Android NDK (Android)
-        if: matrix.config.release == 'android'
-        run: sdkmanager "ndk;28.2.13676358"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -276,66 +253,17 @@ jobs:
       - name: Stage the pdf.js vendor assets
         run: pnpm --filter @readest/readest-app setup-vendors
 
-      - name: Initialize the Android project (Android)
-        if: matrix.config.release == 'android'
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-        run: |
-          set -euo pipefail
-          cd apps/readest-app
-          rm -rf src-tauri/gen/android
-          pnpm tauri android init
-          pnpm tauri icon ../../data/icons/readest-book.png
-          git checkout .
-
-          pushd src-tauri/gen/android
-          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
-          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
-          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
-          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
-          popd
-
-      - name: Build (Windows)
-        if: matrix.config.release == 'windows'
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: |
-          set -euo pipefail
-          cd apps/readest-app
-          pnpm tauri build ${{ matrix.config.build_args }}
-
-      - name: Build (macOS)
-        if: matrix.config.release == 'macos'
-        env:
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: |
-          set -euo pipefail
-          cd apps/readest-app
-          pnpm tauri build ${{ matrix.config.build_args }}
-
-      - name: Build (Linux)
-        if: matrix.config.release == 'linux'
+      - name: Build
         env:
           NODE_OPTIONS: --max-old-space-size=8192
           # scripts/tauri.mjs runs `cargo tauri` (the CLI built above) and adds
           # --features cef on this platform.
-          TAURI_CEF_CARGO: '1'
+          TAURI_CEF_CARGO: ${{ matrix.config.release == 'linux' && '1' || '0' }}
           STRACE_MODE: '0'
         run: |
           set -euo pipefail
           cd apps/readest-app
           pnpm tauri build ${{ matrix.config.build_args }}
-
-      - name: Build (Android)
-        if: matrix.config.release == 'android'
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: |
-          set -euo pipefail
-          cd apps/readest-app
-          pnpm tauri android build
-          pnpm tauri android build -t aarch64
 
       # The sources look right; prove the artifact is right too. Runs on the
       # `out/` tree the frontend build just produced.
@@ -400,8 +328,118 @@ jobs:
             "Readest_${VERSION}_x86_64.deb" \
             --clobber
 
+  # ---------------------------------------------------------------------------
+  # Android: skipped outright until the signing secrets exist.
+  # ---------------------------------------------------------------------------
+  build_android:
+    name: Build android
+    needs: [detect, prepare]
+    if: needs.detect.outputs.build == 'true' && needs.detect.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+    steps:
+      - name: Check out upstream Readest
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ needs.detect.outputs.ref }}
+          submodules: recursive
+
+      - name: Check out the build recipe
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .recipe
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install the Android NDK
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-cargo
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Apply the unlock patch
+        run: node .recipe/tools/unlock.mjs
+
+      - name: Verify the patch (sources)
+        run: node .recipe/tools/verify.mjs
+
+      # `pnpm tauri android init` and `icon` dirty tracked files and upstream
+      # undoes that with `git checkout .`; committing first makes that restore
+      # the patch instead of reverting it.
+      - name: Snapshot the patched tree
+        run: |
+          git config user.email "ci@readest-unlocked.invalid"
+          git config user.name "readest-unlocked ci"
+          git add -A
+          git commit -m "chore: apply unlocked-build patch" --no-verify
+
+      - name: Stage the pdf.js vendor assets
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: Initialize the Android project
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          rm -rf src-tauri/gen/android
+          pnpm tauri android init
+          pnpm tauri icon ../../data/icons/readest-book.png
+          git checkout .
+
+          pushd src-tauri/gen/android
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+          popd
+
+      - name: Build the APKs
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          pnpm tauri android build
+          pnpm tauri android build -t aarch64
+
+      - name: Verify the patch (built bundle)
+        run: node .recipe/tools/check-bundle.mjs
+
       - name: Upload the Android artifacts
-        if: matrix.config.release == 'android'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -409,9 +447,9 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          apk_path=apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release
-          cp "$apk_path/app-universal-release.apk" "Readest_${VERSION}_universal.apk"
-          cp "$apk_path/app-universal-release.apk" "Readest_${VERSION}_arm64.apk"
+          apk=apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          cp "$apk" "Readest_${VERSION}_universal.apk"
+          cp "$apk" "Readest_${VERSION}_arm64.apk"
           gh release upload "$TAG" \
             "Readest_${VERSION}_universal.apk" \
             "Readest_${VERSION}_arm64.apk" \
@@ -420,7 +458,7 @@ jobs:
   # ---------------------------------------------------------------------------
   summary:
     name: Summary
-    needs: [detect, build]
+    needs: [detect, build, build_android]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -428,7 +466,8 @@ jobs:
         env:
           TAG: ${{ needs.detect.outputs.tag }}
           BUILD: ${{ needs.detect.outputs.build }}
-          RESULT: ${{ needs.build.result }}
+          DESKTOP: ${{ needs.build.result }}
+          ANDROID: ${{ needs.build_android.result }}
         run: |
           {
             echo "## Result"
@@ -438,6 +477,9 @@ jobs:
             else
               echo "Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
               echo ""
-              echo "Build job result: \`$RESULT\`"
+              echo "| leg | result |"
+              echo "| --- | --- |"
+              echo "| desktop matrix | $DESKTOP |"
+              echo "| android | $ANDROID |"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
