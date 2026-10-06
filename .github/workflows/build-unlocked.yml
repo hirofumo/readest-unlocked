@@ -633,6 +633,8 @@ jobs:
           unsplit="$apk_dir/universal/release/app-universal-release.apk"
           skip='{"build":{"beforeBuildCommand":""}}'
 
+          # No -t filter: the split build emits one APK per ABI and the universal
+          # APK keeps every ABI the project targets, i686 and x86_64 included.
           pnpm tauri android build --apk --split-per-abi
           echo "APKs produced by the split build:"
           find "$apk_dir" -name '*.apk' -print | sort
