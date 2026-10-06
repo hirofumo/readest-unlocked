@@ -1,0 +1,437 @@
+name: Build unlocked Readest
+
+# Follows readest/readest and publishes an unlocked build of every new upstream
+# release. The upstream source is never committed here: each run checks out the
+# tag, applies tools/unlock.mjs, and builds. See README.md.
+
+on:
+  schedule:
+    # Daily at 03:00 UTC. Rebuilds only when upstream has a version we have not
+    # published yet, so idle days cost one cheap `detect` job.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Upstream ref to build (tag, branch or sha). Empty = latest upstream release tag.'
+        required: false
+        default: ''
+      force:
+        description: 'Rebuild even when a release for this version already exists'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Never let two builds publish to the same release concurrently.
+concurrency:
+  group: build-unlocked
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: readest/readest
+  # Husky would install commit hooks that run biome over the patched tree.
+  HUSKY: '0'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Which version are we building, and do we need to build at all?
+  # ---------------------------------------------------------------------------
+  detect:
+    name: Resolve upstream version
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.resolve.outputs.build }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      android: ${{ steps.android.outputs.android }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Resolve the upstream version
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_FORCE: ${{ inputs.force }}
+        run: node tools/resolve-upstream.mjs
+
+      # Signing secrets cannot be read by a job-level `if`, so the Android leg is
+      # gated on this step's output. Absent secrets simply skip Android.
+      - name: Check for Android signing secrets
+        id: android
+        if: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
+        run: echo "android=true" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Unlocked Readest build"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| upstream ref | \`${{ steps.resolve.outputs.ref }}\` |"
+            echo "| version | \`${{ steps.resolve.outputs.version }}\` |"
+            echo "| release tag | \`${{ steps.resolve.outputs.tag }}\` |"
+            echo "| build needed | \`${{ steps.resolve.outputs.build }}\` |"
+            echo "| android enabled | \`${{ steps.android.outputs.android == 'true' }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Create the release up front so every matrix leg only has to upload assets.
+  # ---------------------------------------------------------------------------
+  prepare:
+    name: Prepare the release
+    needs: detect
+    if: needs.detect.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release when it does not exist yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          REF: ${{ needs.detect.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; assets will be replaced with --clobber."
+            exit 0
+          fi
+
+          NOTES="Automatically built unlocked Readest $VERSION, from $UPSTREAM_REPO at $REF.
+
+          Premium client gates are disabled: third-party cloud sync (WebDAV, S3-compatible bucket, Google Drive, OneDrive, iCloud Drive), per-chapter read-aloud audio download, Audiobookshelf offline downloads, trusted-device pairing, and custom translators with your own API key.
+
+          Still decided by the upstream service, not unlockable in a client build: Readest Cloud storage quota, daily AI translation quota, and the Send-to-Readest email address.
+
+          Readest is AGPL-3.0. These installers are unmodified upstream code plus the patch scripts in this repository. They are unsigned, so Windows SmartScreen and macOS Gatekeeper will warn on first launch."
+
+          gh release create "$TAG" \
+            --title "Readest $VERSION (unlocked build)" \
+            --notes "$NOTES" \
+            --target "$GITHUB_SHA"
+
+  # ---------------------------------------------------------------------------
+  # One matrix leg per platform. Each leg checks out upstream, patches it, builds
+  # and uploads its own artifacts.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.config.name }}
+    needs: [detect, prepare]
+    if: |
+      needs.detect.outputs.build == 'true' &&
+      (matrix.config.release != 'android' || needs.detect.outputs.android == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - os: windows-latest
+            name: windows-x86_64
+            release: windows
+            rust_targets: x86_64-pc-windows-msvc
+            build_args: '--target x86_64-pc-windows-msvc --bundles nsis'
+          - os: ubuntu-latest
+            name: android
+            release: android
+            rust_targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+            build_args: ''
+          - os: ubuntu-22.04
+            name: linux-x86_64
+            release: linux
+            rust_targets: x86_64-unknown-linux-gnu
+            build_args: '--bundles appimage,deb'
+          - os: macos-latest
+            name: macos-universal
+            release: macos
+            rust_targets: x86_64-apple-darwin,aarch64-apple-darwin
+            build_args: '--target universal-apple-darwin --bundles dmg'
+    runs-on: ${{ matrix.config.os }}
+    timeout-minutes: ${{ matrix.config.release == 'android' && 150 || 120 }}
+    permissions:
+      contents: write
+    steps:
+      - name: Check out upstream Readest
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ needs.detect.outputs.ref }}
+          submodules: recursive
+
+      - name: Check out the build recipe
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .recipe
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Set up Java (Android)
+        if: matrix.config.release == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: Set up the Android SDK (Android)
+        if: matrix.config.release == 'android'
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install the Android NDK (Android)
+        if: matrix.config.release == 'android'
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.config.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.config.name }}-cargo
+
+      # The npm cli-cef bundles the AppImage with a broken quick-sharun fork.
+      # Build the CLI from readest/tauri instead; rev-pinned, and the marker
+      # skips the rebuild while rust-cache keeps ~/.cargo/bin.
+      - name: Install the CEF tauri CLI (Linux)
+        if: matrix.config.release == 'linux'
+        run: |
+          set -euo pipefail
+          rev=6beeb209b5514f597a26f48b7a5b9fe4c59b5f12
+          marker="$HOME/.cargo/bin/.cargo-tauri-rev"
+          if [ -x "$HOME/.cargo/bin/cargo-tauri" ] && [ "$(cat "$marker" 2>/dev/null)" = "$rev" ]; then
+            echo "cargo-tauri at $rev already installed"
+            exit 0
+          fi
+          cargo install tauri-cli --git https://github.com/readest/tauri --rev "$rev" --locked --force
+          echo "$rev" > "$marker"
+
+      - name: Install Linux build dependencies (Linux)
+        if: matrix.config.release == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig-dev libgtk-3-dev libwebkit2gtk-4.1 libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1 libjavascriptcoregtk-4.1-dev gir1.2-javascriptcoregtk-4.1 gir1.2-webkit2-4.1 libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      # Chromium dlopens NSS, libpulse and libspeechd by soname; whatever the
+      # bundle lacks comes from the host and breaks against the bundled glibc.
+      # Stage them where the bundler picks them up.
+      - name: Stage the CEF AppImage runtime libraries (Linux)
+        if: matrix.config.release == 'linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y libnss3 libpulse0 libspeechd2 libxkbcommon-x11-0
+          nss_dir=$(dirname "$(ls /usr/lib/*-linux-gnu/nss/libsoftokn3.so)")
+          lib_dir=${nss_dir%/nss}
+          sudo cp -f --remove-destination "$nss_dir"/*.so "$lib_dir/"
+          conf=apps/readest-app/src-tauri/tauri.conf.json
+          jq --arg d "$lib_dir" '.bundle.linux.appimage.files += {
+              "/usr/lib/libspeechd.so.2": ($d + "/libspeechd.so.2"),
+              "/usr/lib/libxkbcommon-x11.so.0": ($d + "/libxkbcommon-x11.so.0")
+            }' "$conf" > "$conf.tmp" && mv "$conf.tmp" "$conf"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Apply the unlock patch
+        run: node .recipe/tools/unlock.mjs
+
+      - name: Verify the patch (sources)
+        run: node .recipe/tools/verify.mjs
+
+      # Snapshot the patched tree. Some upstream build steps run `git checkout .`
+      # to undo generated files; committing first makes that restore the patch
+      # instead of reverting it.
+      - name: Snapshot the patched tree
+        run: |
+          git config user.email "ci@readest-unlocked.invalid"
+          git config user.name "readest-unlocked ci"
+          git add -A
+          git commit -m "chore: apply unlocked-build patch" --no-verify
+
+      - name: Stage the pdf.js vendor assets
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: Initialize the Android project (Android)
+        if: matrix.config.release == 'android'
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          rm -rf src-tauri/gen/android
+          pnpm tauri android init
+          pnpm tauri icon ../../data/icons/readest-book.png
+          git checkout .
+
+          pushd src-tauri/gen/android
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" > keystore.properties
+          echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+          base64 -d <<< "${{ secrets.ANDROID_KEY_BASE64 }}" > "$RUNNER_TEMP/keystore.jks"
+          echo "storeFile=$RUNNER_TEMP/keystore.jks" >> keystore.properties
+          popd
+
+      - name: Build (Windows)
+        if: matrix.config.release == 'windows'
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          pnpm tauri build ${{ matrix.config.build_args }}
+
+      - name: Build (macOS)
+        if: matrix.config.release == 'macos'
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          pnpm tauri build ${{ matrix.config.build_args }}
+
+      - name: Build (Linux)
+        if: matrix.config.release == 'linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          # scripts/tauri.mjs runs `cargo tauri` (the CLI built above) and adds
+          # --features cef on this platform.
+          TAURI_CEF_CARGO: '1'
+          STRACE_MODE: '0'
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          pnpm tauri build ${{ matrix.config.build_args }}
+
+      - name: Build (Android)
+        if: matrix.config.release == 'android'
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          pnpm tauri android build
+          pnpm tauri android build -t aarch64
+
+      # The sources look right; prove the artifact is right too. Runs on the
+      # `out/` tree the frontend build just produced.
+      - name: Verify the patch (built bundle)
+        run: node .recipe/tools/check-bundle.mjs
+
+      - name: Build the portable executable (Windows)
+        if: matrix.config.release == 'windows'
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          echo "NEXT_PUBLIC_PORTABLE_APP=true" >> .env.local
+          pnpm tauri build ${{ matrix.config.build_args }}
+
+      - name: Upload the Windows artifacts
+        if: matrix.config.release == 'windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          installer=$(ls target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe | head -n 1)
+          cp "$installer" "Readest_${VERSION}_x64-setup.exe"
+          cp target/x86_64-pc-windows-msvc/release/readest.exe "Readest_${VERSION}_x64-portable.exe"
+          gh release upload "$TAG" \
+            "Readest_${VERSION}_x64-setup.exe" \
+            "Readest_${VERSION}_x64-portable.exe" \
+            --clobber
+
+      - name: Upload the macOS artifacts
+        if: matrix.config.release == 'macos'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -n 1)
+          cp "$dmg" "Readest_${VERSION}_universal-unsigned.dmg"
+          gh release upload "$TAG" "Readest_${VERSION}_universal-unsigned.dmg" --clobber
+
+      - name: Upload the Linux artifacts
+        if: matrix.config.release == 'linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          appimage=$(ls target/release/bundle/appimage/*.AppImage | head -n 1)
+          deb=$(ls target/release/bundle/deb/*.deb | head -n 1)
+          cp "$appimage" "Readest_${VERSION}_x86_64.AppImage"
+          cp "$deb" "Readest_${VERSION}_x86_64.deb"
+          gh release upload "$TAG" \
+            "Readest_${VERSION}_x86_64.AppImage" \
+            "Readest_${VERSION}_x86_64.deb" \
+            --clobber
+
+      - name: Upload the Android artifacts
+        if: matrix.config.release == 'android'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          apk_path=apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release
+          cp "$apk_path/app-universal-release.apk" "Readest_${VERSION}_universal.apk"
+          cp "$apk_path/app-universal-release.apk" "Readest_${VERSION}_arm64.apk"
+          gh release upload "$TAG" \
+            "Readest_${VERSION}_universal.apk" \
+            "Readest_${VERSION}_arm64.apk" \
+            --clobber
+
+  # ---------------------------------------------------------------------------
+  summary:
+    name: Summary
+    needs: [detect, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        env:
+          TAG: ${{ needs.detect.outputs.tag }}
+          BUILD: ${{ needs.detect.outputs.build }}
+          RESULT: ${{ needs.build.result }}
+        run: |
+          {
+            echo "## Result"
+            echo ""
+            if [ "$BUILD" != "true" ]; then
+              echo "Upstream has not published a new version since the last release; nothing was built."
+            else
+              echo "Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
+              echo ""
+              echo "Build job result: \`$RESULT\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

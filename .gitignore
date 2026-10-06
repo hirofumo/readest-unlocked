@@ -1,0 +1,8 @@
+# Nothing in this repo is generated. Keep it that way.
+node_modules/
+*.log
+.DS_Store
+
+# The upstream checkout used for local patch validation (see README).
+# CI checks upstream out itself and never commits it here.
+readest/
