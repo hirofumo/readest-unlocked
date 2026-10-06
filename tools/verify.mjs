@@ -180,7 +180,7 @@ if (about === null) {
   }
 }
 
-/* 5. self-hosted server override -------------------------------------------- */
+/* 5. self-hosted server ----------------------------------------------------- */
 
 const runtimeConfigFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 'runtimeConfig.ts');
 const runtimeConfig = read(runtimeConfigFile);
@@ -188,25 +188,70 @@ if (runtimeConfig === null) {
   fail(`missing ${runtimeConfigFile}`);
 } else {
   const normalized = lf(runtimeConfig);
-  const overridesBoth =
-    normalized.includes('CUSTOM_SERVER_URL_KEY') &&
-    /apiBaseUrl:\s*custom/.test(normalized) &&
-    /supabaseUrl:\s*custom/.test(normalized);
-  if (overridesBoth) {
-    ok('a configured server URL overrides the API base and the account backend');
-  } else {
-    fail('runtimeConfig.ts does not redirect both the API base and the account backend');
+  const checks = [
+    ['the runtime config type carries a node base URL', normalized.includes('nodeBaseUrl?: string;')],
+    ['a configured server redirects the API base', normalized.includes('apiBaseUrl: url')],
+    ['a configured server redirects the Node API', normalized.includes('nodeBaseUrl: url')],
+    ['a configured server redirects the account backend', normalized.includes('supabaseUrl: url')],
+    [
+      'an optional Supabase anon key is honoured',
+      normalized.includes('CUSTOM_SERVER_ANON_KEY') && normalized.includes('supabaseAnonKey: anonKey'),
+    ],
+  ];
+  for (const [label, passed] of checks) {
+    if (passed) ok(label);
+    else fail(`runtimeConfig.ts: ${label}`);
   }
+}
+
+const environmentFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 'environment.ts');
+const environment = read(environmentFile);
+if (environment === null) {
+  fail(`missing ${environmentFile}`);
+} else if (lf(environment).includes('getRuntimeConfig()?.nodeBaseUrl')) {
+  ok('getNodeBaseUrl follows the configured server');
+} else {
+  fail('getNodeBaseUrl ignores the configured server, so Node endpoints still reach readest.com');
+}
+
+const deeplinkFile = path.join(root, 'apps', 'readest-app', 'src', 'utils', 'deeplink.ts');
+const deeplink = read(deeplinkFile);
+if (deeplink === null) {
+  fail(`missing ${deeplinkFile}`);
+} else if (lf(deeplink).includes('${getBaseUrl()}${ANNOTATION_PATH_PREFIX}')) {
+  ok('annotation links follow the configured server');
+} else {
+  fail('annotation links are still built from the official web host');
 }
 
 const miscPanelFile = path.join(root, 'apps', 'readest-app', 'src', 'components', 'settings', 'MiscPanel.tsx');
 const miscPanel = read(miscPanelFile);
 if (miscPanel === null) {
   fail(`missing ${miscPanelFile}`);
-} else if (miscPanel.includes('settings.custom.serverUrl')) {
-  ok('the Misc panel offers the Server URL entry');
 } else {
-  fail('MiscPanel.tsx has no Server URL entry');
+  const normalized = lf(miscPanel);
+  if (normalized.includes('settings.custom.serverUrl') && normalized.includes('draftAnonKey')) {
+    ok('the Misc panel offers the Server URL and anon key entry');
+  } else {
+    fail('MiscPanel.tsx has no Server URL entry');
+  }
+  // Both controls and the hint have to go through _(), or the panel ignores the
+  // app's language entirely.
+  const untranslated = ["title={_('Server URL')}", "placeholder={_('Supabase anon key (optional)')}", "{_('Reset')}", "{_('Apply')}"].filter(
+    (needle) => !normalized.includes(needle),
+  );
+  if (untranslated.length === 0) ok('every Server string goes through the translation helper');
+  else fail(`these Server strings are not translated: ${untranslated.join(', ')}`);
+}
+
+const zhLocaleFile = path.join(root, 'apps', 'readest-app', 'public', 'locales', 'zh-CN', 'translation.json');
+const zhLocale = read(zhLocaleFile);
+if (zhLocale === null) {
+  fail(`missing ${zhLocaleFile}`);
+} else if (zhLocale.includes('把应用指向自建的 Readest')) {
+  ok('the new Server strings are translated for zh-CN');
+} else {
+  fail('zh-CN has no translation for the new Server strings');
 }
 
 /* 6. build environment ------------------------------------------------------ */

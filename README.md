@@ -28,9 +28,11 @@ These are decided by the upstream service, server-side, from the account token. 
 
 ## Custom server URL
 
-The Misc settings panel has a **Server URL** entry. Left empty, which is the default, the app uses the official Readest servers. Setting it points the app's API and account backend at a self-hosted instance.
+The Misc settings panel has a **Server URL** entry and an optional Supabase anon key. With both empty — the default — the app talks to the official Readest servers.
 
-One limitation, stated plainly: this repository builds against upstream, so the compiled-in Supabase anon key still comes from the official build. An account on a self-hosted Supabase may therefore need that server to accept the official anon key.
+Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. **Reset** clears both and returns to the official servers. Changing either reloads the app, because the API base and the Supabase client are resolved once at startup.
+
+Not covered: the CDN hosts for webfonts and published covers, and the readest.com landing pages the web build links to. The desktop app reaches the former only for optional assets and copes without them.
 
 ## Release assets
 

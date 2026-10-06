@@ -228,6 +228,14 @@ function patchTauriConfig(root) {
 function patchAppConstants(root) {
   const file = path.join(root, 'apps', 'readest-app', 'src', 'services', 'constants.ts');
   const { text: original, eol } = readText(file);
+
+  // Already done: re-running must be a no-op rather than an anchor mismatch,
+  // because one of the rewrites below changes a value's quote style.
+  if (original.includes(RELEASE_DOWNLOAD_BASE) && !original.includes('download.readest.com')) {
+    log('constants.ts: already points at this project');
+    return;
+  }
+
   let text = original;
 
   const rewrites = [
@@ -240,8 +248,11 @@ function patchAppConstants(root) {
       // No separate nightly channel is published; pointing at a file that does
       // not exist keeps a nightly-channel client on the stable manifest instead
       // of reaching for upstream's nightly.
+      //
+      // The quote class accepts both forms: this rewrite turns the value into a
+      // template literal, so a second run has to recognise its own output.
       label: 'nightly manifest URL',
-      pattern: /export const READEST_NIGHTLY_UPDATER_FILE = '[^']*';/,
+      pattern: /export const READEST_NIGHTLY_UPDATER_FILE = [`'][^`']*[`'];/,
       replacement: `export const READEST_NIGHTLY_UPDATER_FILE = \`\${LATEST_DOWNLOAD_BASE_URL}/nightly.json\`;`,
     },
     {
@@ -344,56 +355,149 @@ function patchAboutWindow(root) {
  * Lets the app be pointed at a self-hosted Readest instead of the official
  * servers, without rebuilding.
  *
- * The single override point is getRuntimeConfig(): the API base URL is read
- * from `apiBaseUrl`, and the account backend (Supabase URL *and* its anon key)
- * from `supabaseUrl` / `supabaseAnonKey`. Overriding that one function therefore
- * redirects both, and a Settings entry is all the UI that is needed.
+ * Three surfaces have to move together for a self-hosted backend to work:
  *
- * Known limit, worth stating rather than hiding: the anon key keeps falling back
- * to the one compiled into this build, so a self-hosted Supabase has to accept
- * that key (or the operator supplies their own build).
+ *   - `apiBaseUrl`  the web/API origin, read by getBaseUrl()
+ *   - `nodeBaseUrl` the Node API origin, read by getNodeBaseUrl() — upstream
+ *                   does not consult the runtime config there at all, so
+ *                   without this the Node endpoints still go to readest.com
+ *   - `supabaseUrl` and `supabaseAnonKey`  the account backend. The key is
+ *                   optional: a deployment that reuses the official project
+ *                   keys, or runs no accounts at all, has no use for it.
+ *
+ * All of them are read through getRuntimeConfig(), so overriding that one
+ * function covers the lot and a Settings entry is the only UI needed.
  */
 const SERVER_URL_KEY = 'readest.serverUrl';
+const SERVER_ANON_KEY = 'readest.supabaseAnonKey';
+
+const RUNTIME_CONFIG_TYPE_ANCHOR = `  apiBaseUrl?: string;`;
 
 const RUNTIME_CONFIG_ANCHOR = `export const getRuntimeConfig = () =>
   typeof window === 'undefined' ? undefined : window.__READEST_RUNTIME_CONFIG;`;
 
-const RUNTIME_CONFIG_REPLACEMENT = `// ${MARKER} server URL key shared with the Settings entry in MiscPanel.
+const RUNTIME_CONFIG_REPLACEMENT = `// ${MARKER} keys shared with the Settings entry in MiscPanel.
 export const CUSTOM_SERVER_URL_KEY = '${SERVER_URL_KEY}';
+export const CUSTOM_SERVER_ANON_KEY = '${SERVER_ANON_KEY}';
 
-/** The user's self-hosted server URL, or null to use the built-in servers. */
-export const getCustomServerUrl = (): string | null => {
+const readStoredSetting = (key: string): string | null => {
   if (typeof window === 'undefined') return null;
   try {
-    return window.localStorage?.getItem(CUSTOM_SERVER_URL_KEY) || null;
+    return window.localStorage?.getItem(key) || null;
   } catch {
     // A webview with storage disabled must not break startup.
     return null;
   }
 };
 
+/** The user's self-hosted server URL, or null to use the built-in servers. */
+export const getCustomServerUrl = (): string | null => readStoredSetting(CUSTOM_SERVER_URL_KEY);
+
+/**
+ * Everything a self-hosted deployment replaces. One origin covers all three by
+ * default: a Readest server serves the web app, the API and the Node API from
+ * the same host.
+ */
+export const getCustomServerConfig = (): ReadestRuntimeConfig | null => {
+  const url = getCustomServerUrl();
+  if (!url) return null;
+  const anonKey = readStoredSetting(CUSTOM_SERVER_ANON_KEY);
+  return {
+    apiBaseUrl: url,
+    nodeBaseUrl: url,
+    supabaseUrl: url,
+    ...(anonKey ? { supabaseAnonKey: anonKey } : {}),
+  };
+};
+
 export const getRuntimeConfig = (): ReadestRuntimeConfig | undefined => {
   if (typeof window === 'undefined') return undefined;
   const base = window.__READEST_RUNTIME_CONFIG;
-  const custom = getCustomServerUrl();
+  const custom = getCustomServerConfig();
   if (!custom) return base;
-  return { ...base, apiBaseUrl: custom, supabaseUrl: custom };
+  return { ...base, ...custom };
 };`;
 
 function patchServerUrlSetting(root) {
+  /* runtimeConfig.ts: accept a node base URL, then honour the stored override */
   const configFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 'runtimeConfig.ts');
-  const { text: configSource, eol: configEol } = readText(configFile);
-  if (configSource.includes(`${MARKER} server URL key`)) {
-    log('runtimeConfig.ts: server URL override already present');
+  const { text: configSource0, eol: configEol } = readText(configFile);
+  let configSource = configSource0;
+
+  if (configSource.includes('nodeBaseUrl?: string;')) {
+    log('runtimeConfig.ts: runtime config already accepts a node base URL');
   } else {
-    const patched = replaceOnce(
+    configSource = replaceOnce(
+      configSource,
+      RUNTIME_CONFIG_TYPE_ANCHOR,
+      `  apiBaseUrl?: string;\n  nodeBaseUrl?: string;`,
+      'runtimeConfig.ts/ReadestRuntimeConfig',
+    );
+    log('runtimeConfig.ts: runtime config accepts a node base URL');
+  }
+
+  if (configSource.includes(`${MARKER} keys shared with the Settings entry`)) {
+    log('runtimeConfig.ts: server override already present');
+  } else {
+    configSource = replaceOnce(
       configSource,
       RUNTIME_CONFIG_ANCHOR,
       RUNTIME_CONFIG_REPLACEMENT,
       'runtimeConfig.ts/getRuntimeConfig',
     );
-    writeText(configFile, patched, configEol);
-    log('runtimeConfig.ts: a configured server URL now overrides the built-in one');
+    log('runtimeConfig.ts: a configured server redirects the API, the Node API and the account backend');
+  }
+
+  if (configSource !== configSource0) writeText(configFile, configSource, configEol);
+
+  /* environment.ts: getNodeBaseUrl has no runtime-config branch upstream */
+  const envFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 'environment.ts');
+  const { text: envSource0, eol: envEol } = readText(envFile);
+  let envSource = envSource0;
+  const nodeAnchor = `export const getNodeBaseUrl = () =>
+  process.env['NEXT_PUBLIC_NODE_BASE_URL'] ?? READEST_NODE_BASE_URL;`;
+
+  if (envSource.includes(`${MARKER} node base URL`)) {
+    log('environment.ts: node base override already present');
+  } else {
+    envSource = replaceOnce(
+      envSource,
+      nodeAnchor,
+      `export const getNodeBaseUrl = () =>
+  // ${MARKER} node base URL, so a self-hosted server is not bypassed for the
+  // endpoints that go through the Node runtime.
+  getRuntimeConfig()?.nodeBaseUrl ??
+  process.env['NEXT_PUBLIC_NODE_BASE_URL'] ??
+  READEST_NODE_BASE_URL;`,
+      'environment.ts/getNodeBaseUrl',
+    );
+    writeText(envFile, envSource, envEol);
+    log('environment.ts: the Node API follows the configured server');
+  }
+
+  /* deeplink.ts: annotation links should point at the configured server */
+  const linkFile = path.join(root, 'apps', 'readest-app', 'src', 'utils', 'deeplink.ts');
+  const { text: linkSource0, eol: linkEol } = readText(linkFile);
+  let linkSource = linkSource0;
+
+  if (linkSource.includes(`${MARKER} annotation links`)) {
+    log('deeplink.ts: annotation links already follow the configured server');
+  } else {
+    linkSource = replaceOnce(
+      linkSource,
+      `  const base = \`\${READEST_WEB_BASE_URL}\${ANNOTATION_PATH_PREFIX}\${bookHash}/annotation/\${noteId}\`;`,
+      `  // ${MARKER} annotation links follow whichever server this build talks to.
+  const base = \`\${getBaseUrl()}\${ANNOTATION_PATH_PREFIX}\${bookHash}/annotation/\${noteId}\`;`,
+      'deeplink.ts/buildAnnotationWebUrl',
+    );
+    linkSource = replaceOnce(
+      linkSource,
+      `import { READEST_WEB_BASE_URL } from '@/services/constants';`,
+      `import { getBaseUrl } from '@/services/environment';`,
+      'deeplink.ts/import',
+    );
+    writeText(linkFile, linkSource, linkEol);
+    log('deeplink.ts: annotation links follow the configured server');
   }
 
   const panelFile = path.join(root, 'apps', 'readest-app', 'src', 'components', 'settings', 'MiscPanel.tsx');
@@ -405,19 +509,27 @@ function patchServerUrlSetting(root) {
 
   const stateAnchor = `  const [inputFocusInAndroid, setInputFocusInAndroid] = useState(false);`;
   const stateReplacement = `  const [inputFocusInAndroid, setInputFocusInAndroid] = useState(false);
-  // ${MARKER} self-hosted server override, kept in sync with
-  // CUSTOM_SERVER_URL_KEY in services/runtimeConfig.ts.
+  // ${MARKER} self-hosted server override, kept in sync with the
+  // CUSTOM_SERVER_*_KEY constants in services/runtimeConfig.ts.
   const [draftServerUrl, setDraftServerUrl] = useState<string>(() =>
     typeof window === 'undefined' ? '' : (window.localStorage?.getItem('${SERVER_URL_KEY}') ?? ''),
   );
-  const applyServerUrl = () => {
-    const url = draftServerUrl.trim();
-    // The Supabase client is built at module load, so the new URL only takes
-    // effect after a reload.
-    if (url) window.localStorage.setItem('${SERVER_URL_KEY}', url);
-    else window.localStorage.removeItem('${SERVER_URL_KEY}');
+  const [draftAnonKey, setDraftAnonKey] = useState<string>(() =>
+    typeof window === 'undefined' ? '' : (window.localStorage?.getItem('${SERVER_ANON_KEY}') ?? ''),
+  );
+  const saveServerSettings = (url: string, anonKey: string) => {
+    const store = (key: string, value: string) => {
+      if (value) window.localStorage.setItem(key, value);
+      else window.localStorage.removeItem(key);
+    };
+    store('${SERVER_URL_KEY}', url);
+    store('${SERVER_ANON_KEY}', anonKey);
+    // Both the API base and the Supabase client are resolved at module load, so
+    // the new values only take effect after a reload.
     window.location.reload();
-  };`;
+  };
+  const applyServerSettings = () =>
+    saveServerSettings(draftServerUrl.trim(), draftAnonKey.trim());`;
 
   const jsxAnchor = `        'settings.custom.readerUiCss',
       )}
@@ -429,31 +541,49 @@ function patchServerUrlSetting(root) {
       )}
 
       <BoxedList
-        title={_('Server')}
+        title={_('Server URL')}
         data-setting-id='settings.custom.serverUrl'
         innerClassName='ps-0!'
       >
-        <div className='relative p-1'>
+        <div className='flex flex-col gap-2 p-1'>
           <input
             className='input input-ghost w-full border-0 p-3 text-base outline-hidden! sm:text-sm'
             type='url'
             inputMode='url'
             spellCheck='false'
+            autoCapitalize='off'
+            autoCorrect='off'
             placeholder='https://readest.com'
             value={draftServerUrl}
             onChange={(e) => setDraftServerUrl(e.target.value)}
           />
-          <button
-            className='hover:bg-base-300 bg-base-200 absolute bottom-2 end-4 h-8 items-center rounded-md px-3 text-xs font-medium'
-            onClick={applyServerUrl}
-          >
-            {_('Apply')}
-          </button>
+          <input
+            className='input input-ghost w-full border-0 p-3 text-base outline-hidden! sm:text-sm'
+            type='text'
+            spellCheck='false'
+            autoCapitalize='off'
+            autoCorrect='off'
+            placeholder={_('Supabase anon key (optional)')}
+            value={draftAnonKey}
+            onChange={(e) => setDraftAnonKey(e.target.value)}
+          />
+          <div className='flex justify-end gap-2 px-1 pb-1'>
+            <button
+              type='button'
+              className='btn btn-ghost btn-sm'
+              onClick={() => saveServerSettings('', '')}
+            >
+              {_('Reset')}
+            </button>
+            <button type='button' className='btn btn-contrast btn-sm' onClick={applyServerSettings}>
+              {_('Apply')}
+            </button>
+          </div>
         </div>
       </BoxedList>
       <p className='text-base-content/60 px-4 text-xs'>
         {_(
-          'Leave empty to use the official Readest servers. Changing this reloads the app.',
+          'Point the app at a self-hosted Readest. Leave the URL empty to use the official servers.',
         )}
       </p>
     </div>
@@ -464,6 +594,84 @@ function patchServerUrlSetting(root) {
   patched = replaceOnce(patched, jsxAnchor, jsxReplacement, 'MiscPanel.tsx/serverUrlRow');
   writeText(panelFile, patched, panelEol);
   log('MiscPanel.tsx: added the Server URL entry');
+}
+
+/* ------------------------------------------------------------ translations */
+
+/**
+ * The strings the Server entry adds that no locale carries yet. Everything else
+ * on that panel reuses keys that are already translated ("Server URL", "Apply",
+ * "Reset").
+ *
+ * The app translates by content: the English string is the key, so a locale
+ * without an entry renders the key itself rather than a placeholder or a blank.
+ * That is why only the locales that would otherwise read English are listed —
+ * inventing translations for all 36 would be guesswork.
+ */
+const SERVER_TRANSLATIONS = {
+  'zh-CN': {
+    'Supabase anon key (optional)': 'Supabase 匿名密钥（可选）',
+    'Point the app at a self-hosted Readest. Leave the URL empty to use the official servers.':
+      '把应用指向自建的 Readest。留空则使用官方服务器。',
+  },
+  'zh-TW': {
+    'Supabase anon key (optional)': 'Supabase 匿名金鑰（選填）',
+    'Point the app at a self-hosted Readest. Leave the URL empty to use the official servers.':
+      '把應用指向自架的 Readest。留空則使用官方伺服器。',
+  },
+};
+
+function patchTranslations(root) {
+  for (const [locale, entries] of Object.entries(SERVER_TRANSLATIONS)) {
+    const file = path.join(
+      root,
+      'apps',
+      'readest-app',
+      'public',
+      'locales',
+      locale,
+      'translation.json',
+    );
+    if (!existsSync(file)) {
+      warn(`translations: ${locale} has no translation.json; skipping`);
+      continue;
+    }
+
+    const raw = readFileSync(file, 'utf8');
+    const missing = Object.entries(entries).filter(
+      ([key]) => !raw.includes(JSON.stringify(key)),
+    );
+    if (missing.length === 0) {
+      log(`translations: ${locale} already carries the server strings`);
+      continue;
+    }
+
+    const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+    const lines = raw.split(/\r?\n/);
+    if (lines[0]?.trim() !== '{') {
+      warn(`translations: ${locale}/translation.json does not open with '{'; skipping`);
+      continue;
+    }
+
+    // The file is a flat key/value map whose order carries no meaning, so the
+    // new entries go straight after the opening brace.
+    lines.splice(
+      1,
+      0,
+      ...missing.map(([key, value]) => `  ${JSON.stringify(key)}: ${JSON.stringify(value)},`),
+    );
+    const patched = lines.join(eol);
+
+    try {
+      JSON.parse(patched);
+    } catch (err) {
+      warn(`translations: ${locale} would become invalid JSON (${err.message}); skipping`);
+      continue;
+    }
+
+    writeFileSync(file, patched, 'utf8');
+    log(`translations: ${locale} gained ${missing.length} server string(s)`);
+  }
 }
 
 /* ------------------------------------------------- cosmetic UI (best effort) */
@@ -600,6 +808,7 @@ patchTauriConfig(root);
 patchAppConstants(root);
 patchAboutWindow(root);
 patchServerUrlSetting(root);
+patchTranslations(root);
 const skippedCosmetic = patchCosmeticUi(root);
 writeBuildEnv(root);
 
