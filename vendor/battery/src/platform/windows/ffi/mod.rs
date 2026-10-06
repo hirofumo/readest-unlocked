@@ -84,6 +84,11 @@ impl DeviceIterator {
             return Err(io::Error::from_raw_os_error(result as i32));
         }
 
+        // `pdidd` is a raw pointer, and writing through it does not require the
+        // binding to be mutable, so rustc reports `unused_mut` — which this crate
+        // turns into an error through `#![deny(unused)]` at the top of lib.rs.
+        // The binding keeps its `mut` for the targets that do need it.
+        #[allow(unused_mut)]
         let mut pdidd = unsafe {
             winbase::LocalAlloc(minwinbase::LPTR, buf_size as basetsd::SIZE_T)
                 as setupapi::PSP_DEVICE_INTERFACE_DETAIL_DATA_W

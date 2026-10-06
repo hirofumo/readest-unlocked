@@ -1,7 +1,7 @@
 # battery (vendored)
 
-This is the published `battery` crate, version 0.7.8, with exactly two lines
-changed. It exists so the 32-bit Windows build can compile at all. `README.md`
+This is the published `battery` crate, version 0.7.8, with three small changes on
+top. It exists so the 32-bit Windows build can compile at all. `README.md`
 beside this file is the crate's own.
 
 ## Why
@@ -24,7 +24,9 @@ lines 113 and 143 of the published file.
 
 ## What changed
 
-Only those two expressions, and only in how the pointer is taken:
+Two expressions, and one attribute.
+
+The pointers:
 
 ```rust
 // was: (***pdidd).DevicePath.as_ptr()
@@ -37,6 +39,12 @@ core::ptr::addr_of_mut!(query.BatteryTag) as minwindef::LPVOID
 Both produce the same address; they simply avoid materialising a reference to an
 unaligned field, which is the undefined behaviour the compiler objects to. The
 access itself is unchanged, and x86 tolerates unaligned loads and stores.
+
+With those fixed, i686 progress stops on a second problem in the same file:
+`pdidd` is a raw pointer, so writing through it never requires the binding to be
+mutable, and rustc reports `unused_mut` — which `#![deny(unused)]` in `lib.rs`
+promotes to an error. The binding keeps its `mut`, because the targets that do
+need it must keep compiling, and gains a statement-level `#[allow(unused_mut)]`.
 
 ## How it is wired up
 
