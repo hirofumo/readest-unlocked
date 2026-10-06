@@ -269,7 +269,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          key: ${{ matrix.config.name }}-cargo
+          # macOS shares one cache, written by the universal leg and read by all
+          # three. Its target holds both architectures, so the thin legs find
+          # theirs there, and three separate caches would push the repository
+          # past the 10 GB Actions cache budget — entries were being evicted,
+          # which is why some legs rebuilt from scratch (41 minutes against 32
+          # for the same work on a warm cache).
+          key: ${{ matrix.config.release == 'macos' && 'macos-cargo' || format('{0}-cargo', matrix.config.name) }}
+          save-if: ${{ matrix.config.release != 'macos' || matrix.config.name == 'macos-universal' }}
 
       # The npm cli-cef bundles the AppImage with a broken quick-sharun fork.
       # Build the CLI from readest/tauri instead; rev-pinned, and the marker
@@ -533,6 +540,9 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           key: android-cargo
+          # Both families build the same triples from the same sources, so one
+          # writer is enough and the other save would be rejected as a duplicate.
+          save-if: ${{ matrix.family == 'replace' }}
 
       # `tauri android init` regenerates the Gradle project every run, so the
       # wrapper distribution and the dependency cache are what make later runs
