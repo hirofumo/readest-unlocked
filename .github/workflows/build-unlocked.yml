@@ -377,25 +377,25 @@ jobs:
         run: |
           set -euo pipefail
           bundle=target/release/bundle
-          cp "$(ls "$bundle"/appimage/*.AppImage | head -n 1)" "Readest_${VERSION}_x86_64.AppImage"
+          appimage=$(ls "$bundle"/appimage/*.AppImage | head -n 1)
+          cp "$appimage" "Readest_${VERSION}_x86_64.AppImage"
           cp "$(ls "$bundle"/deb/*.deb | head -n 1)" "Readest_${VERSION}_x86_64.deb"
           gh release upload "$TAG" \
             "Readest_${VERSION}_x86_64.AppImage" \
             "Readest_${VERSION}_x86_64.deb" \
             --clobber
 
-          # The Linux updater artifact is the AppImage tarball.
-          tarball=$(ls "$bundle"/appimage/*.AppImage.tar.gz 2>/dev/null | head -n 1 || true)
-          if [ -z "$tarball" ]; then
-            echo "::warning::no .AppImage.tar.gz updater archive was produced; Linux clients will not be offered updates"
-            exit 0
+          # The Linux updater artifact is the AppImage itself, signed in place —
+          # the app downloads it, chmods it and launches it. Upstream's manifest
+          # points both linux-x86_64 and linux-x86_64-appimage at that asset.
+          # Without its .sig the platform is simply left out of the manifest,
+          # which the manifest job reports.
+          if [ -f "$appimage.sig" ]; then
+            cp "$appimage.sig" "Readest_${VERSION}_x86_64.AppImage.sig"
+            gh release upload "$TAG" "Readest_${VERSION}_x86_64.AppImage.sig" --clobber
+          else
+            echo "::warning::no .sig next to the AppImage, so Linux clients will not be offered updates"
           fi
-          cp "$tarball" "Readest_${VERSION}_x86_64.AppImage.tar.gz"
-          cp "$tarball.sig" "Readest_${VERSION}_x86_64.AppImage.tar.gz.sig"
-          gh release upload "$TAG" \
-            "Readest_${VERSION}_x86_64.AppImage.tar.gz" \
-            "Readest_${VERSION}_x86_64.AppImage.tar.gz.sig" \
-            --clobber
 
   # ---------------------------------------------------------------------------
   # Android: skipped outright until the signing secrets exist. Builds two

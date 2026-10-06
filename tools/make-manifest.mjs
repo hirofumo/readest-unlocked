@@ -28,13 +28,33 @@ import path from 'node:path';
 
 const DEFAULT_BASE_URL = 'https://github.com/hirofumo/readest-unlocked/releases/latest/download';
 
+// Platform keys mirror what upstream publishes, so a client computes the same
+// lookup key whichever build it is running.
+//
+// Linux is the one that surprises people: the updater artifact is the AppImage
+// itself, not a tarball. Upstream's manifest points both `linux-x86_64` and
+// `linux-x86_64-appimage` at the AppImage asset, and the app's own AppImage
+// update path downloads it, chmods it and launches it.
 const DESKTOP_ENTRIES = [
-  { keys: ['windows-x86_64'], asset: (v) => `Readest_${v}_x64-setup.exe` },
+  {
+    keys: ['windows-x86_64', 'windows-x86_64-nsis'],
+    asset: (v) => `Readest_${v}_x64-setup.exe`,
+  },
   { keys: ['windows-x86_64-portable'], asset: (v) => `Readest_${v}_x64-portable.exe` },
-  { keys: ['darwin-aarch64', 'darwin-x86_64'], asset: (v) => `Readest_${v}_universal.app.tar.gz` },
+  {
+    keys: [
+      'darwin-aarch64',
+      'darwin-x86_64',
+      'darwin-universal',
+      'darwin-aarch64-app',
+      'darwin-x86_64-app',
+      'darwin-universal-app',
+    ],
+    asset: (v) => `Readest_${v}_universal.app.tar.gz`,
+  },
   {
     keys: ['linux-x86_64', 'linux-x86_64-appimage'],
-    asset: (v) => `Readest_${v}_x86_64.AppImage.tar.gz`,
+    asset: (v) => `Readest_${v}_x86_64.AppImage`,
   },
 ];
 
