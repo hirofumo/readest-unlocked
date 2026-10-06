@@ -22,7 +22,6 @@ import path from 'node:path';
 
 const MARKER = '[readest-unlocked]';
 const IDENTIFIER = process.env['READEST_COEXIST_IDENTIFIER'] ?? 'com.hirofumo.readest.unlocked';
-const PRODUCT_NAME = process.env['READEST_COEXIST_PRODUCT_NAME'] ?? 'Readest Unlocked';
 const MANIFEST_FILE = 'latest-coexist.json';
 
 const failures = [];
@@ -73,9 +72,8 @@ const confFile = path.join(root, 'apps', 'readest-app', 'src-tauri', 'tauri.conf
   if (!/"identifier"\s*:\s*"[^"]*"/.test(text)) fail('tauri.conf.json has no identifier');
   text = text.replace(/"identifier"\s*:\s*"[^"]*"/, `"identifier": "${IDENTIFIER}"`);
 
-  if (!/"productName"\s*:\s*"[^"]*"/.test(text)) fail('tauri.conf.json has no productName');
-  text = text.replace(/"productName"\s*:\s*"[^"]*"/, `"productName": "${PRODUCT_NAME}"`);
-
+  // productName is deliberately left alone: both families are labelled "Readest"
+  // and only the About dialog explains which one is installed.
   if (text !== original) writeText(confFile, text, eol);
 
   let conf;
@@ -85,10 +83,10 @@ const confFile = path.join(root, 'apps', 'readest-app', 'src-tauri', 'tauri.conf
     fail(`tauri.conf.json is not valid JSON after patching: ${err.message}`);
   }
   if (conf.identifier !== IDENTIFIER) fail(`identifier is ${conf.identifier}, expected ${IDENTIFIER}`);
-  if (conf.productName !== PRODUCT_NAME) {
-    fail(`productName is ${conf.productName}, expected ${PRODUCT_NAME}`);
+  if (conf.productName !== 'Readest') {
+    fail(`productName is ${conf.productName}, expected it to stay "Readest"`);
   }
-  log(`identity: ${IDENTIFIER} ("${PRODUCT_NAME}")`);
+  log(`identity: ${IDENTIFIER} (label stays "Readest")`);
 }
 
 /* 2. its own updater manifest --------------------------------------------- */

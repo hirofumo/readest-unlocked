@@ -312,6 +312,134 @@ function patchAboutWindow(root) {
   log(`AboutWindow.tsx: added the modification notice and ${REPO_URL}`);
 }
 
+/* -------------------------------------------------- self-hosted server URL */
+
+/**
+ * Lets the app be pointed at a self-hosted Readest instead of the official
+ * servers, without rebuilding.
+ *
+ * The single override point is getRuntimeConfig(): the API base URL is read
+ * from `apiBaseUrl`, and the account backend (Supabase URL *and* its anon key)
+ * from `supabaseUrl` / `supabaseAnonKey`. Overriding that one function therefore
+ * redirects both, and a Settings entry is all the UI that is needed.
+ *
+ * Known limit, worth stating rather than hiding: the anon key keeps falling back
+ * to the one compiled into this build, so a self-hosted Supabase has to accept
+ * that key (or the operator supplies their own build).
+ */
+const SERVER_URL_KEY = 'readest.serverUrl';
+
+const RUNTIME_CONFIG_ANCHOR = `export const getRuntimeConfig = () =>
+  typeof window === 'undefined' ? undefined : window.__READEST_RUNTIME_CONFIG;`;
+
+const RUNTIME_CONFIG_REPLACEMENT = `// ${MARKER} server URL key shared with the Settings entry in MiscPanel.
+export const CUSTOM_SERVER_URL_KEY = '${SERVER_URL_KEY}';
+
+/** The user's self-hosted server URL, or null to use the built-in servers. */
+export const getCustomServerUrl = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage?.getItem(CUSTOM_SERVER_URL_KEY) || null;
+  } catch {
+    // A webview with storage disabled must not break startup.
+    return null;
+  }
+};
+
+export const getRuntimeConfig = (): ReadestRuntimeConfig | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  const base = window.__READEST_RUNTIME_CONFIG;
+  const custom = getCustomServerUrl();
+  if (!custom) return base;
+  return { ...base, apiBaseUrl: custom, supabaseUrl: custom };
+};`;
+
+function patchServerUrlSetting(root) {
+  const configFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 'runtimeConfig.ts');
+  const { text: configSource, eol: configEol } = readText(configFile);
+  if (configSource.includes(`${MARKER} server URL key`)) {
+    log('runtimeConfig.ts: server URL override already present');
+  } else {
+    const patched = replaceOnce(
+      configSource,
+      RUNTIME_CONFIG_ANCHOR,
+      RUNTIME_CONFIG_REPLACEMENT,
+      'runtimeConfig.ts/getRuntimeConfig',
+    );
+    writeText(configFile, patched, configEol);
+    log('runtimeConfig.ts: a configured server URL now overrides the built-in one');
+  }
+
+  const panelFile = path.join(root, 'apps', 'readest-app', 'src', 'components', 'settings', 'MiscPanel.tsx');
+  const { text: panelSource, eol: panelEol } = readText(panelFile);
+  if (panelSource.includes(`${MARKER} self-hosted server`)) {
+    log('MiscPanel.tsx: server URL entry already present');
+    return;
+  }
+
+  const stateAnchor = `  const [inputFocusInAndroid, setInputFocusInAndroid] = useState(false);`;
+  const stateReplacement = `  const [inputFocusInAndroid, setInputFocusInAndroid] = useState(false);
+  // ${MARKER} self-hosted server override, kept in sync with
+  // CUSTOM_SERVER_URL_KEY in services/runtimeConfig.ts.
+  const [draftServerUrl, setDraftServerUrl] = useState<string>(() =>
+    typeof window === 'undefined' ? '' : (window.localStorage?.getItem('${SERVER_URL_KEY}') ?? ''),
+  );
+  const applyServerUrl = () => {
+    const url = draftServerUrl.trim();
+    // The Supabase client is built at module load, so the new URL only takes
+    // effect after a reload.
+    if (url) window.localStorage.setItem('${SERVER_URL_KEY}', url);
+    else window.localStorage.removeItem('${SERVER_URL_KEY}');
+    window.location.reload();
+  };`;
+
+  const jsxAnchor = `        'settings.custom.readerUiCss',
+      )}
+    </div>
+  );
+};`;
+
+  const jsxReplacement = `        'settings.custom.readerUiCss',
+      )}
+
+      <BoxedList
+        title={_('Server')}
+        data-setting-id='settings.custom.serverUrl'
+        innerClassName='ps-0!'
+      >
+        <div className='relative p-1'>
+          <input
+            className='input input-ghost w-full border-0 p-3 text-base outline-hidden! sm:text-sm'
+            type='url'
+            inputMode='url'
+            spellCheck='false'
+            placeholder='https://readest.com'
+            value={draftServerUrl}
+            onChange={(e) => setDraftServerUrl(e.target.value)}
+          />
+          <button
+            className='hover:bg-base-300 bg-base-200 absolute bottom-2 end-4 h-8 items-center rounded-md px-3 text-xs font-medium'
+            onClick={applyServerUrl}
+          >
+            {_('Apply')}
+          </button>
+        </div>
+      </BoxedList>
+      <p className='text-base-content/60 px-4 text-xs'>
+        {_(
+          'Leave empty to use the official Readest servers. Changing this reloads the app.',
+        )}
+      </p>
+    </div>
+  );
+};`;
+
+  let patched = replaceOnce(panelSource, stateAnchor, stateReplacement, 'MiscPanel.tsx/state');
+  patched = replaceOnce(patched, jsxAnchor, jsxReplacement, 'MiscPanel.tsx/serverUrlRow');
+  writeText(panelFile, patched, panelEol);
+  log('MiscPanel.tsx: added the Server URL entry');
+}
+
 /* ------------------------------------------------- cosmetic UI (best effort) */
 
 /**
@@ -445,6 +573,7 @@ patchAccessModule(root);
 patchTauriConfig(root);
 patchAppConstants(root);
 patchAboutWindow(root);
+patchServerUrlSetting(root);
 const skippedCosmetic = patchCosmeticUi(root);
 writeBuildEnv(root);
 

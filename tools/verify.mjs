@@ -180,7 +180,36 @@ if (about === null) {
   }
 }
 
-/* 5. build environment ------------------------------------------------------ */
+/* 5. self-hosted server override -------------------------------------------- */
+
+const runtimeConfigFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 'runtimeConfig.ts');
+const runtimeConfig = read(runtimeConfigFile);
+if (runtimeConfig === null) {
+  fail(`missing ${runtimeConfigFile}`);
+} else {
+  const normalized = lf(runtimeConfig);
+  const overridesBoth =
+    normalized.includes('CUSTOM_SERVER_URL_KEY') &&
+    /apiBaseUrl:\s*custom/.test(normalized) &&
+    /supabaseUrl:\s*custom/.test(normalized);
+  if (overridesBoth) {
+    ok('a configured server URL overrides the API base and the account backend');
+  } else {
+    fail('runtimeConfig.ts does not redirect both the API base and the account backend');
+  }
+}
+
+const miscPanelFile = path.join(root, 'apps', 'readest-app', 'src', 'components', 'settings', 'MiscPanel.tsx');
+const miscPanel = read(miscPanelFile);
+if (miscPanel === null) {
+  fail(`missing ${miscPanelFile}`);
+} else if (miscPanel.includes('settings.custom.serverUrl')) {
+  ok('the Misc panel offers the Server URL entry');
+} else {
+  fail('MiscPanel.tsx has no Server URL entry');
+}
+
+/* 6. build environment ------------------------------------------------------ */
 
 for (const rel of [path.join('apps', 'readest-app', '.env.local'), '.env.local']) {
   const file = path.join(root, rel);
@@ -203,7 +232,7 @@ for (const rel of [path.join('apps', 'readest-app', '.env.local'), '.env.local']
   }
 }
 
-/* 6. cosmetic patches (warnings only) --------------------------------------- */
+/* 7. cosmetic patches (warnings only) --------------------------------------- */
 
 const COSMETIC_SENTINELS = [
   [

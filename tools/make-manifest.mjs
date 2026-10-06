@@ -35,37 +35,50 @@ const DEFAULT_BASE_URL = 'https://github.com/hirofumo/readest-unlocked/releases/
 // itself, not a tarball. Upstream's manifest points both `linux-x86_64` and
 // `linux-x86_64-appimage` at the AppImage asset, and the app's own AppImage
 // update path downloads it, chmods it and launches it.
+//
+// There is deliberately no `windows-*-portable` entry: the portable download is
+// a zip, and the updater downloads whatever an entry points at and launches it
+// as an executable, so a zip entry would fail on every attempt. The portable
+// variant is updated by downloading a new zip.
 const DESKTOP_ENTRIES = [
   {
     keys: ['windows-x86_64', 'windows-x86_64-nsis'],
-    asset: (v) => `Readest_${v}_x64-setup.exe`,
+    asset: (v) => `Readest-${v}-windows-x64-setup.exe`,
   },
-  { keys: ['windows-x86_64-portable'], asset: (v) => `Readest_${v}_x64-portable.exe` },
   {
-    keys: [
-      'darwin-aarch64',
-      'darwin-x86_64',
-      'darwin-universal',
-      'darwin-aarch64-app',
-      'darwin-x86_64-app',
-      'darwin-universal-app',
-    ],
-    asset: (v) => `Readest_${v}_universal.app.tar.gz`,
+    keys: ['windows-aarch64', 'windows-aarch64-nsis'],
+    asset: (v) => `Readest-${v}-windows-arm64-setup.exe`,
+  },
+  {
+    keys: ['darwin-x86_64', 'darwin-x86_64-app'],
+    asset: (v) => `Readest-${v}-macos-x64-updater.tar.gz`,
+  },
+  {
+    keys: ['darwin-aarch64', 'darwin-aarch64-app'],
+    asset: (v) => `Readest-${v}-macos-arm64-updater.tar.gz`,
+  },
+  {
+    keys: ['darwin-universal', 'darwin-universal-app'],
+    asset: (v) => `Readest-${v}-macos-universal-updater.tar.gz`,
   },
   {
     keys: ['linux-x86_64', 'linux-x86_64-appimage'],
-    asset: (v) => `Readest_${v}_x86_64.AppImage`,
+    asset: (v) => `Readest-${v}-linux-x64.AppImage`,
+  },
+  {
+    keys: ['linux-aarch64', 'linux-aarch64-appimage'],
+    asset: (v) => `Readest-${v}-linux-arm64.AppImage`,
   },
 ];
 
 const ANDROID_ENTRIES = {
   replace: [
-    { keys: ['android-universal'], asset: (v) => `Readest_${v}_universal.apk` },
-    { keys: ['android-arm64'], asset: (v) => `Readest_${v}_arm64.apk` },
+    { keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-replace-arm64-v8a.apk` },
+    { keys: ['android-universal'], asset: (v) => `Readest-${v}-android-replace-universal.apk` },
   ],
   coexist: [
-    { keys: ['android-universal'], asset: (v) => `Readest_${v}_coexist-universal.apk` },
-    { keys: ['android-arm64'], asset: (v) => `Readest_${v}_coexist-arm64.apk` },
+    { keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-coexist-arm64-v8a.apk` },
+    { keys: ['android-universal'], asset: (v) => `Readest-${v}-android-coexist-universal.apk` },
   ],
 };
 

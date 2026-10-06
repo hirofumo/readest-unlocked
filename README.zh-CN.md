@@ -26,30 +26,42 @@
 - AI 翻译的每日字符额度
 - Send-to-Readest 专属邮箱地址
 
+## 自定义服务器地址
+
+设置（Misc 面板）里新增了 **Server URL** 一项。留空（默认）时使用官方 Readest 服务器；填写后会把应用的 API 与账号后端指向自建实例。
+
+有一点限制需要如实说明：本仓库是针对上游构建的，编译进包内的 Supabase anon key 仍来自官方构建。因此，账号若使用自建 Supabase，可能需要那台服务器接受官方 anon key。
+
 ## 发布产物
 
-`<V>` 是上游版本号，例如 `0.12.12`。每个 release 的 tag 是 `v<V>-unlocked`。
+`<V>` 是上游版本号，例如 `0.12.12`。每个 release 的 tag 是 `v<V>-unlocked`，所有产物都按 `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>` 命名：
 
-| 产物 | 平台 |
+```
+Windows   x64 / arm64              安装包 + sig、便携 zip
+macOS     x64 / arm64 / universal  dmg、更新用 tarball + sig
+Linux     x64 / arm64              AppImage + sig、deb、rpm
+Android   replace / coexist        arm64-v8a、armeabi-v7a、universal（各自 + sig）
+```
+
+| 平台 | 产物 |
 | --- | --- |
-| `Readest_<V>_x64-setup.exe` | Windows x64 安装包（NSIS） |
-| `Readest_<V>_x64-portable.exe` | Windows x64 便携单文件可执行程序 |
-| `Readest_<V>_x86_64.AppImage` | Linux AppImage x86_64 |
-| `Readest_<V>_x86_64.deb` | Linux deb x86_64 |
-| `Readest_<V>_universal-unsigned.dmg` | macOS 通用（Intel 与 Apple Silicon）磁盘映像 |
-| `Readest_<V>_universal.apk` | Android，全 ABI；替换官方应用 |
-| `Readest_<V>_arm64.apk` | Android，仅 arm64；替换官方应用 |
-| `Readest_<V>_coexist-universal.apk` | Android，全 ABI；与官方应用并存安装 |
-| `Readest_<V>_coexist-arm64.apk` | Android，仅 arm64；与官方应用并存安装 |
+| Windows | `Readest-<V>-windows-<arch>-setup.exe` 及其 `.sig`；`Readest-<V>-windows-<arch>-portable.zip` |
+| macOS | `Readest-<V>-macos-<variant>.dmg`；`Readest-<V>-macos-<variant>-updater.tar.gz` 及其 `.sig` |
+| Linux | `Readest-<V>-linux-<arch>.AppImage` 及其 `.sig`；`Readest-<V>-linux-<arch>.deb`；`Readest-<V>-linux-<arch>.rpm` |
+| Android | `Readest-<V>-android-<family>-<abi>.apk` 及其 `.sig` |
+
+Windows 安装包与 Linux AppImage 本身就是更新产物，因此带签名。Windows 便携 zip 不会自更新：更新器下载的是清单指向的文件并把它当作可执行程序启动，而 zip 无法充当这个产物。其余平台仍然自更新。
 
 ### 两个 Android 版本家族
 
-两个 Android 家族只在 application id 与应用名称上不同。
+两个家族安装后都叫 **Readest**，唯一区别是 application id。
 
-| 家族 | Application id | 应用名称 | 行为 |
-| --- | --- | --- | --- |
-| 替换版 | `com.bilingify.readest` | Readest | 与官方应用相同的身份。要在替换官方应用、或从未安装过官方应用时选它；之后从备份恢复的数据会落在同一个位置。必须先卸载官方应用——见下文。 |
-| 并存版 | `com.hirofumo.readest.unlocked` | Readest Unlocked | 与官方应用并存安装，书库从空开始。 |
+| 家族 | Application id | 行为 |
+| --- | --- | --- |
+| 替换版 | `com.bilingify.readest` | 与官方应用相同的身份。要在替换官方应用、或从未安装过官方应用时选它；之后从备份恢复的数据会落在同一个位置。必须先卸载官方应用——见下文。 |
+| 并存版 | `com.hirofumo.readest.unlocked` | 与官方应用并存安装，书库从空开始。 |
+
+应用内的「关于」对话框会说明当前安装的是哪一个。
 
 两个家族使用同一份自行生成的 Android 密钥签名。该密钥不是上游的密钥，因此两个家族都无法就地更新官方应用，官方应用也无法就地更新这两个家族中的任何一个。签名与已安装应用不一致时 Android 会拒绝安装，所以必须先卸载官方版本——这会清除应用本地数据，除非从备份恢复——或者改用并存版。
 
@@ -70,7 +82,7 @@ Job：
 | --- | --- |
 | detect | 解析要构建的上游版本；若该版本的 release 已存在，则整次运行直接跳过。 |
 | prepare | 先建好 release，各构建分支只需上传产物。 |
-| build | Windows x64、Linux x86_64、macOS 通用三个平台的矩阵。 |
+| build | Windows（`x64`、`arm64`）、macOS（`x64`、`arm64`、`universal`）与 Linux（`x64`、`arm64`）的矩阵。 |
 | build_android | 单独的 job：job 级 `if` 读不到 matrix 上下文，而且未配置签名密钥时必须整体跳过 Android。 |
 | manifest | 发布 `latest.json` 与 `latest-coexist.json`，由各分支上传的 `.sig` 文件汇总而成，并附上上游的 `release-notes.json`，供应用内「最近更新」视图使用。 |
 | summary | 汇总各分支的结果。 |
@@ -83,7 +95,7 @@ Job：
 
 应用从本仓库的 releases 自更新，而不是从 readest.com。
 
-每个 release 都会发布签名后的更新清单——替换版 Android 家族与桌面构建用 `latest.json`，并存版 Android 家族用 `latest-coexist.json`——以及 Tauri 更新器用来校验的 `.sig` 文件；校验所用的公钥已编译进应用内。对应的私钥只保存在本仓库的 secrets 中，绝不会随构建分发。请务必保存好这份私钥与它的口令：由于配对的公钥已编译进应用内，一旦丢失，将来的任何 release 都无法签名，已安装的应用也会停止接受更新。
+每个 release 都会发布签名后的更新清单——替换版 Android 家族与桌面构建用 `latest.json`，并存版 Android 家族用 `latest-coexist.json`——以及 Tauri 更新器用来校验的 `.sig` 文件；校验所用的公钥已编译进应用内。上面提到的 Windows 便携 zip 是例外，它不会自更新。对应的私钥只保存在本仓库的 secrets 中，绝不会随构建分发。请务必保存好这份私钥与它的口令：由于配对的公钥已编译进应用内，一旦丢失，将来的任何 release 都无法签名，已安装的应用也会停止接受更新。
 
 ## 验证
 
@@ -99,7 +111,7 @@ Job：
 
 这些产物没有代码签名证书。
 
-- **Windows**：首次运行时 SmartScreen 会警告。
+- **Windows**：首次运行时 SmartScreen 会警告。安装包会自更新；便携 zip 不会。
 - **macOS**：首次打开会被 Gatekeeper 拦下。执行 `xattr -cr /Applications/Readest.app`，然后再打开应用。
 - **Android**：选择 APK 前请先看上面的[两个 Android 版本家族](#两个-android-版本家族)。
 
@@ -122,6 +134,7 @@ AGPL 要求分发修改版本的人提供 Corresponding Source，并附带醒目
 helpers/android-keystore.sh            每次 `tauri android init` 之后写入 Android 签名配置
 tools/unlock.mjs                       补丁器
 tools/coexist.mjs                      把 checkout 切换为并存版 Android 身份
+tools/coexist-android.mjs              把已提交的 src-tauri/gen/android 工程改指向该身份
 tools/verify.mjs                       源码断言
 tools/check-bundle.mjs                 编译产物断言
 tools/make-manifest.mjs                汇总签名后的更新清单
