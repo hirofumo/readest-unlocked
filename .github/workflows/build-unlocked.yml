@@ -534,6 +534,20 @@ jobs:
         with:
           key: android-cargo
 
+      # `tauri android init` regenerates the Gradle project every run, so the
+      # wrapper distribution and the dependency cache are what make later runs
+      # fast. Both Android legs share one key: the first to finish saves it, the
+      # other warns and carries on.
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ needs.detect.outputs.version }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
 
@@ -592,9 +606,11 @@ jobs:
           fi
           bash .recipe/helpers/android-keystore.sh
 
-      # Every invocation writes the SAME output path, so each ABI is staged
-      # before the next build overwrites it. After the first build the frontend
-      # output is already in place, so the remaining ones skip the rebuild.
+      # One Gradle invocation emits every ABI on its own when the APKs are split,
+      # and the frontend is built once for all of them — previously this took
+      # three invocations and three frontend builds. A single-target build still
+      # writes the same app-universal-release.apk path, so each fallback below
+      # reads that path rather than guessing from a file name.
       - name: Build the APKs
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
@@ -602,15 +618,42 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/readest-app
-          apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
-          skip='{"build":{"beforeBuildCommand":""}}'
           family="${{ matrix.family }}"
-          pnpm tauri android build -t aarch64
-          cp "$apk" "../../android-${family}-arm64-v8a.apk"
-          pnpm tauri android build -t armv7 --config "$skip"
-          cp "$apk" "../../android-${family}-armeabi-v7a.apk"
-          pnpm tauri android build --config "$skip"
-          cp "$apk" "../../android-${family}-universal.apk"
+          apk_dir=src-tauri/gen/android/app/build/outputs/apk
+          unsplit="$apk_dir/universal/release/app-universal-release.apk"
+          skip='{"build":{"beforeBuildCommand":""}}'
+
+          pnpm tauri android build --apk --split-per-abi
+          echo "APKs produced by the split build:"
+          find "$apk_dir" -name '*.apk' -print | sort
+
+          stage() { # <grep pattern> <destination>
+            local found
+            found=$(find "$apk_dir" -name '*.apk' | grep -Ei "$1" | head -n 1 || true)
+            if [ -z "$found" ]; then
+              return 1
+            fi
+            cp "$found" "../../$2"
+            echo "staged $2 <- $found"
+          }
+
+          if ! stage 'arm64-v8a' "android-${family}-arm64-v8a.apk"; then
+            echo "::warning::the split build produced no arm64-v8a APK; building that ABI alone"
+            pnpm tauri android build -t aarch64 --config "$skip"
+            cp "$unsplit" "../../android-${family}-arm64-v8a.apk"
+          fi
+
+          if ! stage 'armeabi-v7a' "android-${family}-armeabi-v7a.apk"; then
+            echo "::warning::the split build produced no armeabi-v7a APK; building that ABI alone"
+            pnpm tauri android build -t armv7 --config "$skip"
+            cp "$unsplit" "../../android-${family}-armeabi-v7a.apk"
+          fi
+
+          if ! stage 'universal' "android-${family}-universal.apk"; then
+            echo "::warning::the split build produced no universal APK; building it alone"
+            pnpm tauri android build --config "$skip"
+            cp "$unsplit" "../../android-${family}-universal.apk"
+          fi
 
       - name: Verify the patch (built bundle)
         run: node .recipe/tools/check-bundle.mjs
