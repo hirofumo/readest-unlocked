@@ -640,9 +640,9 @@ jobs:
           find "$apk_dir" -name '*.apk' -print | sort
 
           # Matching has to be on the file NAME. The split build writes every
-          # APK under a directory called `universal`, so a match against the
-          # whole path made the universal APK resolve to whichever file `find`
-          # happened to list first.
+          # APK under a directory called universal, so a match against the whole
+          # path made the universal APK resolve to whichever file find happened
+          # to list first.
           stage() { # <file name fragment> <destination>
             local found
             found=$(find "$apk_dir" -name "*$1*.apk" -print | head -n 1 || true)
