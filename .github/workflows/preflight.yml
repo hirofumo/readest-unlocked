@@ -33,6 +33,9 @@ concurrency:
 
 env:
   UPSTREAM_REPO: readest/readest
+  # Set during a signing-key rotation so this check verifies against the same key
+  # the build is writing; empty otherwise. See TECHNICAL.md §11.
+  READEST_UNLOCKED_UPDATER_PUBKEY: ${{ vars.READEST_UNLOCKED_UPDATER_PUBKEY }}
 
 jobs:
   preflight:

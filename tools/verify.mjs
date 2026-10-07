@@ -25,7 +25,11 @@ const REPO_URL = `https://github.com/${REPO}`;
 const RELEASES_URL = `${REPO_URL}/releases/latest`;
 const RELEASE_DOWNLOAD_BASE = `${REPO_URL}/releases/latest/download`;
 const UPDATER_MANIFEST_URL = `${RELEASE_DOWNLOAD_BASE}/latest.json`;
+// Same source as unlock.mjs reads, so a key rotation moves both at once
+// instead of silently disagreeing about which key was compiled in. `||` and not
+// `??`: an unset GitHub variable arrives as an empty string.
 const UPDATER_PUBKEY =
+  process.env['READEST_UNLOCKED_UPDATER_PUBKEY'] ||
   'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3RDUzQjUzOTgwNUM0NjgKUldSb3hBV1lVenZWaDM2Tk02R2hGY3U1M1VzRFl6WlZrTnUxYTJmT3FxbGF3bndzTG9RWlA5UmEK';
 
 const failures = [];

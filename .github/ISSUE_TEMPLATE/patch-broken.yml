@@ -1,0 +1,52 @@
+name: Patch stopped applying
+description: An anchor in tools/unlock.mjs, or an assertion in tools/verify.mjs, no longer matches upstream
+title: 'patch: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when a build leg or the daily **Preflight the upstream branch**
+        run fails inside `tools/unlock.mjs` or `tools/verify.mjs`.
+
+        This is the expected failure mode of the design: patches are anchored on
+        exact upstream text, and a hard failure is how the project finds out that
+        upstream moved something. It is not a security problem — an existing
+        release keeps working, it is the *next* one that cannot be built yet.
+
+  - type: input
+    id: run
+    attributes:
+      label: Failing run
+      description: Link to the failed workflow run
+      placeholder: https://github.com/hirofumo/readest-unlocked/actions/runs/…
+    validations:
+      required: true
+
+  - type: input
+    id: upstream
+    attributes:
+      label: Upstream ref
+      description: The tag, branch or commit the patch was applied to
+      placeholder: main, or v0.12.12
+    validations:
+      required: true
+
+  - type: textarea
+    id: failure
+    attributes:
+      label: The failure
+      description: |
+        Paste the log. `unlock.mjs` prints the exact anchor it expected;
+        `verify.mjs` names the assertion that did not hold.
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmed
+    attributes:
+      label: Before filing
+      options:
+        - label: The same failure happens locally with `node tools/unlock.mjs --root <checkout>`
+        - label: I read the anchor printed in the error and found where it moved upstream

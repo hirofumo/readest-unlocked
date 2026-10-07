@@ -31,6 +31,11 @@ concurrency:
 
 env:
   UPSTREAM_REPO: readest/readest
+  # A signing-key rotation sets this repository variable rather than editing the
+  # scripts (see TECHNICAL.md §11). Empty — the normal state — means "use the key
+  # the scripts carry", which is why they test it with `||` and not `??`: an
+  # unset repository variable arrives as an empty string.
+  READEST_UNLOCKED_UPDATER_PUBKEY: ${{ vars.READEST_UNLOCKED_UPDATER_PUBKEY }}
   # Husky would install commit hooks that run biome over the patched tree.
   HUSKY: '0'
   NEXT_TELEMETRY_DISABLED: '1'

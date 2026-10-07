@@ -1,0 +1,61 @@
+name: Build problem
+description: A build leg failed, or an artifact published here does not behave as described
+title: 'build: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for problems with **this repository's** pipeline or artifacts.
+        A problem with reading, syncing or the interface itself belongs
+        [upstream](https://github.com/readest/readest/issues) — the build recipe
+        does not change how the reader behaves.
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows (installer)
+        - Windows (portable zip)
+        - macOS
+        - Linux (AppImage)
+        - Linux (deb / rpm)
+        - Android (replacing family)
+        - Android (coexisting family)
+        - Not platform-specific
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From the About dialog, or the release tag
+      placeholder: 0.12.12 (v0.12.12-unlocked)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, what happened instead, and the exact steps.
+    validations:
+      required: true
+
+  - type: input
+    id: run
+    attributes:
+      label: Failing run (if a build leg failed)
+      description: Leave empty if the build itself succeeded
+      placeholder: https://github.com/hirofumo/readest-unlocked/actions/runs/…
+
+  - type: checkboxes
+    id: confirmed
+    attributes:
+      label: Before filing
+      options:
+        - label: The About dialog confirms this is an unlocked build
+        - label: I verified my download against the release's `SHA256SUMS`
+        - label: I checked this is not simply the expected code-signing warning (SmartScreen / Gatekeeper)

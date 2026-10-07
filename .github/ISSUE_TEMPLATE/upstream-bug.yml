@@ -1,0 +1,62 @@
+name: Something is wrong in the reader itself
+description: Reading, syncing, the interface or the store — this belongs upstream, and this form helps you file it there
+title: 'upstream: '
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This repository ships a build recipe, not a reader.** It applies a small
+        patch to upstream's code and publishes the result. A bug in reading,
+        rendering, syncing, the interface or the store is upstream's, and filing
+        it here means the people who wrote that code never see it.
+
+        File it at **[readest/readest issues](https://github.com/readest/readest/issues)**
+        instead. This form exists to make that easy: fill it in, then copy the
+        result across.
+
+        Two exceptions belong here rather than upstream, because they are caused
+        by this build and not by the reader:
+
+        - the app offers an update whose download fails, or an update check
+          reports an error — that is this project's release endpoint
+        - the app says a premium feature is locked, or the About dialog does not
+          say this is an unlocked build — that is this project's patch
+
+  - type: checkboxes
+    id: reproduced
+    attributes:
+      label: Before filing upstream
+      options:
+        - label: The same thing happens in the official build from readest.com
+          required: true
+        - label: I am reporting it at readest/readest, not here
+          required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Android
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Readest version
+      description: From the About dialog
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens, and what should happen instead
+      description: Steps to reproduce, what you saw, what you expected. Upstream will want this detail.
+    validations:
+      required: true

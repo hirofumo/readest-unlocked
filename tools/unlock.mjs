@@ -32,8 +32,23 @@ const RELEASES_URL = `${REPO_URL}/releases/latest`;
 const RELEASE_DOWNLOAD_BASE = `${REPO_URL}/releases/latest/download`;
 const UPDATER_MANIFEST_URL = `${RELEASE_DOWNLOAD_BASE}/latest.json`;
 
-/** Public half of the key in this repository's TAURI_SIGNING_PRIVATE_KEY. */
+/**
+ * Public half of the key in this repository's TAURI_SIGNING_PRIVATE_KEY.
+ *
+ * Overridable on purpose. Tauri's updater takes a single `pubkey` (see
+ * plugins/updater/src/config.rs — `pub: String`), so rotating the signing key
+ * means shipping one release that is signed with the *old* key and carries the
+ * *new* public key. Being able to do that by setting a variable, instead of
+ * editing and re-verifying this file under time pressure, is the difference
+ * between a rotation that works and one that gets rushed.
+ *
+ * `verify.mjs` reads the same variable; set it wherever either one runs.
+ */
 const UPDATER_PUBKEY =
+  // `||` and not `??`: an unset GitHub variable arrives as an empty string, and
+  // an empty pubkey would silently produce a build that can never verify an
+  // update. Same trap `isSelfHosted()` documents upstream.
+  process.env['READEST_UNLOCKED_UPDATER_PUBKEY'] ||
   'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3RDUzQjUzOTgwNUM0NjgKUldSb3hBV1lVenZWaDM2Tk02R2hGY3U1M1VzRFl6WlZrTnUxYTJmT3FxbGF3bndzTG9RWlA5UmEK';
 
 /* ------------------------------------------------------------------ helpers */

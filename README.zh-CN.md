@@ -111,6 +111,26 @@ Job：
 
 被补丁修改的模块还会在运行时设置 `globalThis.__READEST_UNLOCKED__ = true`，这正是第 2 层可行的原因，也是已安装构建可以被检查的依据。
 
+## 校验下载
+
+有两件相互独立的事可以校验，它们回答的是不同的问题。
+
+**文件在传输中没有损坏。** 每个 release 都会发布 `SHA256SUMS`，格式就是 `shasum` 的输出，标准工具可直接使用：
+
+```bash
+gh release download v0.12.12-unlocked --repo hirofumo/readest-unlocked --pattern SHA256SUMS
+# 再下载你需要的那个产物，然后：
+sha256sum -c SHA256SUMS --ignore-missing      # 或：shasum -a 256 -c SHA256SUMS --ignore-missing
+```
+
+**文件确实是在这里构建的。** 每个 release 还带构建来源证明（build provenance attestation），由 GitHub 用与本次 workflow 运行绑定的短期证书签名：
+
+```bash
+gh attestation verify Readest-0.12.12-windows-x64-setup.exe --repo hirofumo/readest-unlocked
+```
+
+只有当文件确实出自本仓库的某次 workflow 运行时，这条命令才会成功，并会告诉你它来自哪个提交、哪一次运行。它**不**宣称代码本身无害——要看那个，去读补丁：每个 release 还附带 `unlock.patch`（相对上游提交的完整 diff）与 `BUILD.md`（写明上游提交、本仓库提交、构建期变量，以及如何校验下载）。
+
 ## 安装
 
 这些产物没有代码签名证书。
@@ -118,6 +138,19 @@ Job：
 - **Windows**：首次运行时 SmartScreen 会警告。安装包会自更新；便携 zip 不会。
 - **macOS**：首次打开会被 Gatekeeper 拦下。执行 `xattr -cr /Applications/Readest.app`，然后再打开应用。
 - **Android**：选择 APK 前请先看上面的[两个 Android 版本家族](#两个-android-版本家族)。
+- **Android 自动更新**：产物命名是稳定的，因此 [Obtainium](https://github.com/ImranR98/Obtainium) 可以直接跟随本仓库——把 `https://github.com/hirofumo/readest-unlocked` 添加为 GitHub 源，再用正则限定到你已安装的那个 APK，例如 `Readest-[\d.]+-android-replace-arm64-v8a\.apk` 或 `Readest-[\d.]+-android-coexist-universal\.apk`。请选与设备上已装家族匹配的那条：两个家族的 application id 不同，无法互相更新。
+
+## 自托管
+
+设置里的 **Server URL** 可以把客户端指向你自己的 Readest 实例。服务端用上游的：[readest/docker](https://github.com/readest/readest/tree/main/docker) 提供 `compose.yaml`，能拉起应用、API 与一套 Supabase，其 README 记录了全部环境变量。
+
+选构建之前值得知道一件事：`SELF_HOSTED=true` 是**上游自己的**开关，且他们发布的镜像默认就把它设为 `true`——上游本来就为自托管部署解锁 premium 客户端功能，无论是否登录。本项目只是把同一条规则应用到桌面与 Android 构建上（上游不发布这两种），并没有另外发明一套规则。
+
+补丁接通了哪几个面，见 [TECHNICAL.md](TECHNICAL.md) 第 9 节：API 源、Node API 源、账号后端，以及导出批注时构建的网页链接。未覆盖：网页字体与已发布封面的 CDN 域名。
+
+### 完全不用账号
+
+这里没有任何东西要求 Readest 账号。未登录时应用维护本地书库，同步可以走 WebDAV 或 S3 兼容存储——两者都属于第三方同步，在本构建中均已解锁。只有 Readest Cloud、Send-to-Readest 邮箱与共享批注才需要账号后端。
 
 ## 许可与合规
 
@@ -129,12 +162,15 @@ AGPL 要求分发修改版本的人提供 Corresponding Source，并附带醒目
 
 本项目与 Readest 及 Bilingify LLC 无隶属关系，也未获其背书或支持。「Readest」及其徽标归其所有者所有，此处仅用于说明本构建派生自什么。本构建的支持来自本仓库，而不是上游。
 
+如果这个构建对你有用，真正值得支持的是上游：Readest 是一个活跃开发中的阅读器，背后有真实的基础设施，而它的付费方案正是这些开销的来源。这里没有改变 readest.com 用户的任何约定——解锁只作用于本仓库的构建，而同样的功能对任何自建服务器的人本来也是免费的。阅读、同步或阅读器界面的 bug 属于[上游的 issue 跟踪](https://github.com/readest/readest/issues)，不该提在这里；这里只负责一件事：补丁失效了。
+
 这些构建按「原样」提供，不附带任何担保，仅供个人使用。使用应用所对接的任何第三方服务时，你需要自行遵守其许可与条款。
 
 ## 仓库结构
 
 ```
 .github/workflows/build-unlocked.yml   流水线
+.github/workflows/preflight.yml        每日针对上游自己分支跑补丁 + 断言
 helpers/android-keystore.sh            每次 `tauri android init` 之后写入 Android 签名配置
 tools/unlock.mjs                       补丁器
 tools/coexist.mjs                      把 checkout 切换为并存版 Android 身份
@@ -142,6 +178,9 @@ tools/coexist-android.mjs              把已提交的 src-tauri/gen/android 工
 tools/verify.mjs                       源码断言
 tools/check-bundle.mjs                 编译产物断言
 tools/make-manifest.mjs                汇总签名后的更新清单
+tools/make-checksums.mjs               由 release 的 digest 生成 SHA256SUMS
+tools/make-build-info.mjs              写出随 release 发布的 BUILD.md
+tools/report-failure.mjs               为失败的运行开启——或复用——一个 issue
 tools/resolve-upstream.mjs             上游版本解析
 README.md                              英文版（默认落地页）
 README.zh-CN.md                        中文翻译（本文件）

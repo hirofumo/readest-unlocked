@@ -111,6 +111,34 @@ Three independent layers, none of them a stronger claim than what it actually ch
 
 The patched module also sets `globalThis.__READEST_UNLOCKED__ = true` at runtime, which is what makes layer 2 possible and what an installed build can be checked against.
 
+## Verifying a download
+
+Two independent things can be checked, and they answer different questions.
+
+**The file arrived intact.** Every release publishes a `SHA256SUMS` file in
+`shasum` format, so standard tooling reads it:
+
+```bash
+gh release download v0.12.12-unlocked --repo hirofumo/readest-unlocked --pattern SHA256SUMS
+# download the one artifact you care about, then:
+sha256sum -c SHA256SUMS --ignore-missing      # or: shasum -a 256 -c SHA256SUMS --ignore-missing
+```
+
+**The file was built here.** Every release also carries build provenance
+attestations, signed by GitHub with a short-lived certificate tied to the
+workflow run that produced the artifacts:
+
+```bash
+gh attestation verify Readest-0.12.12-windows-x64-setup.exe --repo hirofumo/readest-unlocked
+```
+
+That fails unless the file came out of a workflow run in this repository, and it
+reports which commit and which run produced it. What it does **not** claim is
+that the code is harmless. For that, read the patch: every release also carries
+`unlock.patch` — the complete diff against the upstream commit — and `BUILD.md`,
+which names that upstream commit, the recipe commit, the build-time variables,
+and how to check a download.
+
 ## Installing
 
 The artifacts are not signed by a code-signing certificate.
@@ -118,6 +146,39 @@ The artifacts are not signed by a code-signing certificate.
 - **Windows**: SmartScreen warns on first run. The installer updates itself; the portable zip does not.
 - **macOS**: Gatekeeper blocks the first launch. Run `xattr -cr /Applications/Readest.app`, then open the app again.
 - **Android**: see [the two families](#the-two-android-families) above before choosing an APK.
+- **Android, updating automatically**: the asset names are stable, so
+  [Obtainium](https://github.com/ImranR98/Obtainium) can follow this repository
+  directly — add `https://github.com/hirofumo/readest-unlocked` as a GitHub
+  source and narrow it to the APK you installed, for example
+  `Readest-[\d.]+-android-replace-arm64-v8a\.apk` or
+  `Readest-[\d.]+-android-coexist-universal\.apk`. Pick the regex that matches
+  the family already on the device: the two have different application ids and
+  cannot update each other.
+
+## Self-hosting
+
+The **Server URL** entry in Settings points the client at your own Readest
+instance. The server side is upstream's: [readest/docker](https://github.com/readest/readest/tree/main/docker)
+ships a `compose.yaml` that brings up the app, the API and a Supabase stack, and
+its README documents the environment variables.
+
+Worth knowing before you pick a build: `SELF_HOSTED=true` is **upstream's own**
+switch for this case, and their published image sets it by default — upstream
+unlocks the premium client features for a self-hosted deployment, signed in or
+not. This project applies the same rule to the desktop and Android builds, which
+upstream does not publish; it does not invent a different one.
+
+What the patch wires up is listed in [TECHNICAL.md](TECHNICAL.md) §9 — the API
+origin, the Node API origin, the account backend and the links the app builds for
+exported annotations. Not covered: the CDN hosts for webfonts and published
+covers.
+
+### Using it without an account at all
+
+Nothing here requires a Readest account. With no signed-in user the app keeps a
+local library, and syncing can go to WebDAV or an S3-compatible bucket — both are
+third-party sync, so both are unlocked in this build. The account backend is only
+needed for Readest Cloud, the Send-to-Readest address and shared annotations.
 
 ## License and compliance
 
@@ -129,12 +190,15 @@ The published binaries keep upstream's copyright notices, license text and proje
 
 This project is not affiliated with, endorsed by or supported by Readest or Bilingify LLC. "Readest" and its logo belong to their owners and are used here only to describe what this build is derived from. Support for this build comes from this repository, not from upstream.
 
+If this build is useful to you, upstream is the thing worth supporting: Readest is an actively developed reader with real infrastructure behind it, and its plans are what pay for that. Nothing here changes the deal for anyone using readest.com — the unlock applies only to builds from this repository, and the same features are already free to anyone running their own server. Bugs in reading, syncing or the reader UI belong in [upstream's tracker](https://github.com/readest/readest/issues); the one thing that belongs here is a patch that stopped applying.
+
 These builds are provided as-is, with no warranty, for personal use. You are responsible for complying with the licenses and terms of any third-party service the app talks to.
 
 ## Repository layout
 
 ```
 .github/workflows/build-unlocked.yml   the pipeline
+.github/workflows/preflight.yml        daily patch+verify against upstream's own branch
 helpers/android-keystore.sh            writes the Android signing config after each `tauri android init`
 tools/unlock.mjs                       the patcher
 tools/coexist.mjs                      switches a checkout to the coexisting Android identity
@@ -142,6 +206,9 @@ tools/coexist-android.mjs              re-points the committed src-tauri/gen/and
 tools/verify.mjs                       source assertions
 tools/check-bundle.mjs                 built-bundle assertion
 tools/make-manifest.mjs                assembles the signed updater manifests
+tools/make-checksums.mjs               builds SHA256SUMS from the release digests
+tools/make-build-info.mjs              writes the BUILD.md published with a release
+tools/report-failure.mjs               opens — or reuses — one issue for a failed run
 tools/resolve-upstream.mjs             upstream version resolution
 README.md                              this file (English)
 README.zh-CN.md                        Chinese translation
