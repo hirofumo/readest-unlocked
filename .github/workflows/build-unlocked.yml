@@ -1327,8 +1327,18 @@ jobs:
 
           A failed leg does not push anyone a broken update: the manifests are
           assembled from whatever signatures landed, and a platform whose
-          signature is missing is simply not offered that version. Once the cause
-          is fixed, re-run with \`force=true\`."
+          signature is missing is simply not offered that version.
+
+          For a transient failure — a download that failed, or an API error in an
+          upload step — re-run only the failed jobs:
+
+          \`gh run rerun ${GITHUB_RUN_ID} --failed\`
+
+          GitHub re-runs the dependent manifest and summary jobs with them, so
+          the checksums, the manifests and the attestation are rebuilt from what
+          the release actually holds. Reach for \`force=true\` only when the cause
+          needs a rebuild: a change to the recipe, or an artifact that has to be
+          produced again."
 
           node tools/report-failure.mjs \
             --title "Build failure: unlocked Readest ${VERSION}" \
