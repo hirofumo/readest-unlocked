@@ -79,7 +79,7 @@ This repository has no Apple certificate, so the iOS asset is an honestly **unsi
 
 What the resulting install can do depends on the account you sign with. App Groups are not available to free personal teams, and the reading widget and the share extension both rely on one, so expect those two to be degraded or missing unless you sign with a paid team. The package keeps upstream's bundle id `com.bilingify.readest`, so installing over an App Store copy of Readest requires removing that copy first.
 
-**None of this has been verified on a device from CI.** What the pipeline proves is that the package is structurally correct — see [How a release is verified](#how-a-release-is-verified) — not that it installs or runs. Treat the first device install as your own test.
+**None of this has been verified on a device from CI.** What the build proves is that the package is structurally correct — see [How a release is verified](#how-a-release-is-verified) — not that it installs or runs. Treat the first device install as your own test.
 
 ## How releases are produced
 
@@ -165,9 +165,7 @@ not. This project applies the same rule to the desktop, Android and iOS builds,
 which upstream does not publish; it does not invent a different one.
 
 Pointing the client at your instance is the **Server URL** entry described under
-[Custom server URL](#custom-server-url) above. It moves the API origin, the Node
-API origin, the account backend and the links the app builds for exported
-annotations; it does not move the CDN hosts for webfonts and published covers.
+[Custom server URL](#custom-server-url) above.
 
 ### Using it without an account at all
 
