@@ -1,0 +1,119 @@
+name: Preflight the upstream branch
+
+# Answers one question cheaply, every day: does the patch still apply to the
+# branch upstream is developing on, or has the code it anchors on moved?
+#
+# The build workflow only ever looks at upstream *releases*, so an anchor that
+# breaks on `main` stays invisible until the next release is cut — usually days
+# or weeks later, and then it surfaces as a failure in the path users update
+# through. This job checks the sources and nothing else: no `pnpm install`, no
+# compile, roughly a minute.
+#
+# It deliberately does not replace the build: it proves the patch still lands and
+# still satisfies every assertion, not that anything compiles.
+
+on:
+  schedule:
+    # Daily at 04:00 UTC — an hour after the release build starts, so the two do
+    # not compete for runners.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Upstream ref to preflight (branch, tag or sha)'
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_REPO: readest/readest
+
+jobs:
+  preflight:
+    name: Patch and verify upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Only so a failure can be reported; this job changes nothing.
+      issues: write
+    steps:
+      - name: Check out upstream Readest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing in this workflow pushes, so the token does not belong in the
+          # runner's git config.
+          persist-credentials: false
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ inputs.ref || 'main' }}
+
+      - name: Check out the build recipe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .recipe
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+
+      # No submodule init and no dependency install: `unlock.mjs` and
+      # `verify.mjs` only read and rewrite files, and the files they touch are
+      # all in the upstream repository itself.
+      - name: Apply the unlock patch
+        run: node .recipe/tools/unlock.mjs
+
+      - name: Verify the patched sources
+        run: node .recipe/tools/verify.mjs
+
+      - name: Record what was checked
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| upstream | \`${UPSTREAM_REPO}\` @ \`${{ inputs.ref || 'main' }}\` |"
+            echo "| upstream commit | \`$(git rev-parse HEAD)\` |"
+            echo "| recipe commit | \`${GITHUB_SHA}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the failure issue
+        # A failed *checkout* leaves no script to run, and a failure to report a
+        # failure must not replace the real error with a confusing one.
+        continue-on-error: true
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF: ${{ inputs.ref || 'main' }}
+        run: |
+          set -euo pipefail
+          body="\`tools/unlock.mjs\` or \`tools/verify.mjs\` no longer holds against **${UPSTREAM_REPO}@${REF}**.
+
+          Nothing is broken in the releases that already exist — but the next
+          upstream release will fail to build until the anchor is updated.
+
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          The failing step names the file and the anchor it expected. Update that
+          anchor in \`tools/unlock.mjs\` **and** the matching assertion in
+          \`tools/verify.mjs\`, then confirm locally with:
+
+          \`\`\`sh
+          node tools/unlock.mjs --root <readest-checkout>
+          node tools/verify.mjs --root <readest-checkout>
+          \`\`\`"
+
+          node .recipe/tools/report-failure.mjs \
+            --title "Patch no longer applies to ${UPSTREAM_REPO}@${REF}" \
+            --body "$body" \
+            --label preflight-failure

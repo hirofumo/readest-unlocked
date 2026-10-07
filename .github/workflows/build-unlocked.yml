@@ -157,6 +157,86 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
+  # Export the patch itself, so a reviewer can read what changed without reading
+  # the script that changed it, next to a provenance summary that names the
+  # upstream commit it was applied to.
+  #
+  # Deliberately absent from `manifest`'s `needs`: a problem here costs one
+  # attachment, never anyone's update path.
+  # ---------------------------------------------------------------------------
+  patch:
+    name: Export the patch and provenance
+    needs: [detect, prepare]
+    if: needs.detect.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out upstream Readest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing in this workflow pushes, so the token does not belong in
+          # the runner's git config where a dependency lifecycle script could
+          # read it and push with this job's `contents: write`.
+          persist-credentials: false
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ needs.detect.outputs.ref }}
+
+      - name: Check out the build recipe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .recipe
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+
+      # `unlock.mjs` only rewrites files, so this job needs no `pnpm install`
+      # and reaches a verdict in about a minute instead of competing with the
+      # thirteen build legs for a runner.
+      - name: Apply the unlock patch
+        run: node .recipe/tools/unlock.mjs
+
+      - name: Export the diff and the provenance summary
+        env:
+          RECIPE_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REF: ${{ needs.detect.outputs.ref }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          git diff > unlock.patch
+          changed=$(git diff --name-only | wc -l | tr -d ' ')
+          echo "unlock.patch covers $changed file(s), $(wc -l < unlock.patch) line(s)"
+          node .recipe/tools/make-build-info.mjs \
+            --out BUILD.md \
+            --upstream-repo "$UPSTREAM_REPO" \
+            --upstream-ref "$REF" \
+            --upstream-sha "$(git rev-parse HEAD)" \
+            --recipe-repo "$RECIPE_REPO" \
+            --recipe-sha "$GITHUB_SHA" \
+            --tag "$TAG" \
+            --version "$VERSION" \
+            --changed-files "$changed" \
+            --run-url "$RUN_URL"
+
+      - name: Publish the patch and the provenance summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" unlock.patch BUILD.md --clobber
+
+  # ---------------------------------------------------------------------------
   # Desktop: one matrix leg per platform and architecture. Each leg checks
   # upstream out, patches it, builds and uploads its own artifacts plus their
   # updater signatures.
@@ -399,6 +479,14 @@ jobs:
           cd apps/readest-app
           echo "NEXT_PUBLIC_PORTABLE_APP=true" >> .env.local
           pnpm tauri build --target ${{ matrix.config.target }} ${{ matrix.config.bundle_args }}
+
+      # The rebuild above rewrote `out/` with NEXT_PUBLIC_PORTABLE_APP baked in,
+      # and the assertion that ran earlier checked the *previous* bundle. A
+      # portable build that lost the marker would ship a locked app, so the
+      # assertion runs again against what this build actually produced.
+      - name: Verify the patch (portable bundle)
+        if: matrix.config.release == 'windows'
+        run: node .recipe/tools/check-bundle.mjs
 
       - name: Upload the Windows artifacts (Windows)
         if: matrix.config.release == 'windows'
@@ -682,6 +770,49 @@ jobs:
       - name: Verify the patch (built bundle)
         run: node .recipe/tools/check-bundle.mjs
 
+      # The ABI check above reads the APK too, for a different question. These
+      # are the two things a file name cannot be trusted about: a coexist APK
+      # that actually carries the replacing application id — which is what a
+      # reordered `git checkout .` would produce — and an unsigned APK, which
+      # is what Gradle produces when it never sees keystore.properties.
+      - name: Verify the APK identity (Android)
+        env:
+          FAMILY: ${{ matrix.family }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          apk="android-${FAMILY}-${VARIANT}.apk"
+          build_tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          echo "using build-tools: $build_tools"
+
+          case "$FAMILY" in
+            replace) want=com.bilingify.readest ;;
+            coexist) want=com.hirofumo.readest.unlocked ;;
+            *) echo "::error::unknown family $FAMILY"; exit 1 ;;
+          esac
+
+          pkg=$("$build_tools/aapt2" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)
+          if [ "$pkg" != "$want" ]; then
+            echo "::error::$apk declares $pkg, expected $want"
+            exit 1
+          fi
+          echo "$apk declares $pkg"
+
+          # `tauri android build` does not sign the APK itself — the upload step
+          # signs for the updater. This is a different signature: the Android
+          # one, which decides whether the APK installs at all.
+          if ! "$build_tools/apksigner" verify --print-certs "$apk" > apk-certs.txt 2>&1; then
+            echo "::error::$apk is not signed by the Android keystore"
+            cat apk-certs.txt
+            exit 1
+          fi
+          {
+            echo "### $apk"
+            echo '```'
+            grep -iE 'Signer #1 certificate (DN|SHA-256)' apk-certs.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload the Android artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -739,6 +870,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Attestations need `id-token` to mint a short-lived Sigstore certificate
+      # and `attestations` to store the resulting record. Scoped to this job —
+      # the workflow-level default stays `contents: read`.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -789,13 +925,43 @@ jobs:
             echo "::warning::could not fetch release-notes.json from $url"
           fi
 
+      - name: Build SHA256SUMS from the release digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # GitHub keeps a sha256 for every uploaded asset and returns it from
+          # the release API, so the checksums cost one call, not a ~2 GB download.
+          node tools/make-checksums.mjs --repo "$GITHUB_REPOSITORY" --tag "$TAG" --out SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --clobber
+
+      # Proves the artifacts came out of this workflow, in this repository, at
+      # the commit the run is pinned to. `subject-checksums` is read as a *file*:
+      # actions/attest parses name+digest out of it and never opens the artifacts
+      # themselves, which is what keeps this step free.
+      - name: Attest the release artifacts
+        uses: actions/attest@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: SHA256SUMS
+
   # ---------------------------------------------------------------------------
   summary:
     name: Summary
-    needs: [detect, build, build_android, manifest]
+    needs: [detect, build, build_android, manifest, patch]
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Only for the failure report below; nothing else in this job writes.
+      issues: write
     steps:
+      # Checked out so the failure report can use the shared script, which keeps
+      # this job's de-duplication identical to the preflight workflow's.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Report
         env:
           TAG: ${{ needs.detect.outputs.tag }}
@@ -803,6 +969,7 @@ jobs:
           DESKTOP: ${{ needs.build.result }}
           ANDROID: ${{ needs.build_android.result }}
           MANIFEST: ${{ needs.manifest.result }}
+          PATCH: ${{ needs.patch.result }}
         run: |
           {
             echo "## Result"
@@ -817,5 +984,49 @@ jobs:
               echo "| desktop matrix | $DESKTOP |"
               echo "| android | $ANDROID |"
               echo "| updater manifests | $MANIFEST |"
+              echo "| patch export | $PATCH |"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # The reason this job carries `always()`: a failed run has to say so
+      # somewhere a person actually looks. `skipped` is not a failure here — the
+      # Android job is skipped whenever the signing secrets are absent, which is
+      # a supported configuration rather than a problem.
+      - name: Open or update the failure issue
+        if: >-
+          needs.detect.outputs.build == 'true' &&
+          (contains(fromJSON('["failure","cancelled"]'), needs.build.result) ||
+           contains(fromJSON('["failure","cancelled"]'), needs.build_android.result) ||
+           contains(fromJSON('["failure","cancelled"]'), needs.manifest.result) ||
+           contains(fromJSON('["failure","cancelled"]'), needs.patch.result))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          DESKTOP: ${{ needs.build.result }}
+          ANDROID: ${{ needs.build_android.result }}
+          MANIFEST: ${{ needs.manifest.result }}
+          PATCH: ${{ needs.patch.result }}
+        run: |
+          set -euo pipefail
+          body="The build for **${TAG}** did not finish cleanly.
+
+          | leg | result |
+          | --- | --- |
+          | desktop matrix | ${DESKTOP} |
+          | android | ${ANDROID} |
+          | updater manifests | ${MANIFEST} |
+          | patch export | ${PATCH} |
+
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          A failed leg does not push anyone a broken update: the manifests are
+          assembled from whatever signatures landed, and a platform whose
+          signature is missing is simply not offered that version. Once the cause
+          is fixed, re-run with \`force=true\`."
+
+          node tools/report-failure.mjs \
+            --title "Build failure: unlocked Readest ${VERSION}" \
+            --body "$body" \
+            --label build-failure
