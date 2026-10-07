@@ -225,13 +225,21 @@ function patchTauriConfig(root) {
  * Left as upstream ships them, "Check Update" would offer an official release
  * and reinstate the paywall it was built to avoid.
  */
+const SENTINEL_CONSTANTS = `// ${MARKER} Update endpoints and signing key are this project's.`;
+
 function patchAppConstants(root) {
   const file = path.join(root, 'apps', 'readest-app', 'src', 'services', 'constants.ts');
   const { text: original, eol } = readText(file);
 
   // Already done: re-running must be a no-op rather than an anchor mismatch,
-  // because one of the rewrites below changes a value's quote style.
-  if (original.includes(RELEASE_DOWNLOAD_BASE) && !original.includes('download.readest.com')) {
+  // because one of the rewrites below changes a value's quote style. The
+  // sentinel is part of the test, so a tree patched by an earlier revision of
+  // this script is brought up to date instead of being skipped.
+  if (
+    original.includes(RELEASE_DOWNLOAD_BASE) &&
+    original.includes(SENTINEL_CONSTANTS) &&
+    !original.includes('download.readest.com')
+  ) {
     log('constants.ts: already points at this project');
     return;
   }
@@ -242,7 +250,7 @@ function patchAppConstants(root) {
     {
       label: 'update manifest base URL',
       pattern: /const LATEST_DOWNLOAD_BASE_URL = '[^']*';/,
-      replacement: `const LATEST_DOWNLOAD_BASE_URL = '${RELEASE_DOWNLOAD_BASE}';`,
+      replacement: `${SENTINEL_CONSTANTS}\nconst LATEST_DOWNLOAD_BASE_URL = '${RELEASE_DOWNLOAD_BASE}';`,
     },
     {
       // No separate nightly channel is published; pointing at a file that does
@@ -743,8 +751,28 @@ function patchCosmeticUi(root) {
   return skipped;
 }
 
-/* ----------------------------------------------------------------- patch 4 */
+/* ------------------------------------------------------- build environment */
 
+/**
+ * Build-time variables written into both `.env.local` files.
+ *
+ * Their scopes, as measured on the built artifact rather than assumed:
+ *
+ *   - `NEXT_PUBLIC_SELF_HOSTED` / `SELF_HOSTED` reach `isSelfHosted()` in the
+ *     shipped bundle — the public half is inlined as `"true"` in the chunks —
+ *     which is the belt to the entitlement patch's braces.
+ *   - `NEXT_PUBLIC_APP_PLATFORM` is already set by upstream's tracked
+ *     `.env.tauri`, which `pnpm build` loads through `dotenv`. It is repeated
+ *     here so that a build which must never resolve as the web app keeps that
+ *     answer even if upstream drops the line.
+ *   - the two `*_FIXED_QUOTA` values are read by `getServerRuntimeConfig()`,
+ *     which only feeds the runtime config a *web* deployment injects into the
+ *     page: `shouldInjectRuntimeConfig` is false for a tauri build, and
+ *     `getStoragePlanData()` reads the unprefixed names anyway. They are inert
+ *     in these artifacts. They stay because they are harmless and would matter
+ *     again on a web deployment — the quotas themselves remain server-decided,
+ *     as the README says.
+ */
 const ENV_VARS = {
   NEXT_PUBLIC_APP_PLATFORM: 'tauri',
   NEXT_PUBLIC_SELF_HOSTED: 'true',

@@ -20,11 +20,13 @@ All five features below are routed through a single entitlement helper, `isCusto
 
 ## What is not unlocked
 
-These are decided by the upstream service, server-side, from the account token. A client build cannot change them, and this project does not claim otherwise:
+The service decides these server-side, from the account token. A client build cannot change that, and this project does not claim otherwise:
 
 - Readest Cloud storage quota and upload limits
 - the daily AI translation character quota
 - the Send-to-Readest personal email address
+
+One caveat on the last one. Its gate runs through the same single entitlement helper this build opens, so the client half of that gate opens along with everything else: the Send-to-Readest panel asks the official server for an address and reports a load failure for an account the server refuses, where an unpatched build showed the upgrade card instead. The capability itself stays server-decided.
 
 ## Custom server URL
 
@@ -121,7 +123,7 @@ The artifacts are not signed by a code-signing certificate.
 
 Readest is licensed under **AGPL-3.0**, and so are this repository's scripts and the binaries published here. The full license text is in [LICENSE](LICENSE).
 
-The AGPL asks anyone distributing a modified version to provide the Corresponding Source and to carry prominent notices that files were changed. This repository is that source: it holds the complete set of patch scripts and the exact build recipe, and every file the patches touch is marked in place with a `[readest-unlocked]` comment naming the change.
+The AGPL asks anyone distributing a modified version to provide the Corresponding Source and to carry prominent notices that files were changed. This repository is that source: it holds the complete set of patch scripts and the exact build recipe. Every file the patches touch is marked in place with a `[readest-unlocked]` comment naming the change, except the three that are JSON and cannot hold one — `tauri.conf.json` and the two locale files. The About dialog carries the notice for those.
 
 The published binaries keep upstream's copyright notices, license text and project identity. Nothing here removes or replaces them.
 

@@ -18,6 +18,7 @@ const MARKER = '[readest-unlocked]';
 const SENTINEL_GATE = `// ${MARKER} Premium gates are opened for this self-built fork.`;
 const SENTINEL_MARKER = `// ${MARKER} Build marker: identifiable from the shipped bundle.`;
 const SENTINEL_NOTICE = `{/* ${MARKER} modification notice (AGPL section 5) */}`;
+const SENTINEL_CONSTANTS = `// ${MARKER} Update endpoints and signing key are this project's.`;
 
 const REPO = process.env['READEST_UNLOCKED_REPO'] ?? 'hirofumo/readest-unlocked';
 const REPO_URL = `https://github.com/${REPO}`;
@@ -158,6 +159,32 @@ if (constants === null) {
   } else {
     fail(`constants.ts does not reference ${RELEASES_URL}`);
   }
+
+  // The manifest paths have to stay *derived*. A value hardcoded to another
+  // host would leave the base constant above in place, so checking that
+  // constant alone would not notice an update path pointing somewhere else.
+  //
+  // The needle is deliberately the template-literal form, which is also what
+  // tools/coexist.mjs rewrites to latest-coexist.json — so this holds for both
+  // Android families rather than pinning one of them.
+  if (normalized.includes(SENTINEL_CONSTANTS)) {
+    ok('constants.ts carries the modification marker');
+  } else {
+    fail('constants.ts is missing the [readest-unlocked] modification marker');
+  }
+
+  const derivedPrefix = '`' + '${LATEST_DOWNLOAD_BASE_URL}/';
+  for (const name of [
+    'READEST_UPDATER_FILE',
+    'READEST_CHANGELOG_FILE',
+    'READEST_NIGHTLY_UPDATER_FILE',
+  ]) {
+    if (normalized.includes(`export const ${name} = ${derivedPrefix}`)) {
+      ok(`${name} is derived from this project’s download base`);
+    } else {
+      fail(`${name} is not derived from LATEST_DOWNLOAD_BASE_URL; it could point at another host`);
+    }
+  }
 }
 
 /* 4. the About dialog ------------------------------------------------------- */
@@ -244,17 +271,39 @@ if (miscPanel === null) {
   else fail(`these Server strings are not translated: ${untranslated.join(', ')}`);
 }
 
-const zhLocaleFile = path.join(root, 'apps', 'readest-app', 'public', 'locales', 'zh-CN', 'translation.json');
-const zhLocale = read(zhLocaleFile);
-if (zhLocale === null) {
-  fail(`missing ${zhLocaleFile}`);
-} else if (zhLocale.includes('把应用指向自建的 Readest')) {
-  ok('the new Server strings are translated for zh-CN');
-} else {
-  fail('zh-CN has no translation for the new Server strings');
+// Both locales unlock.mjs writes. A locale that quietly fell back to the
+// English key-as-content would otherwise pass unnoticed.
+const TRANSLATED_LOCALES = {
+  'zh-CN': '把应用指向自建的 Readest',
+  'zh-TW': '把應用指向自架的 Readest',
+};
+for (const [locale, sentence] of Object.entries(TRANSLATED_LOCALES)) {
+  const file = path.join(root, 'apps', 'readest-app', 'public', 'locales', locale, 'translation.json');
+  const content = read(file);
+  if (content === null) {
+    fail(`missing ${file}`);
+  } else if (content.includes(sentence)) {
+    ok(`the new Server strings are translated for ${locale}`);
+  } else {
+    fail(`${locale} has no translation for the new Server strings`);
+  }
 }
 
 /* 6. build environment ------------------------------------------------------ */
+
+// The keys unlock.mjs writes and the value each has to hold. `SELF_HOSTED` and
+// its public twin are what `isSelfHosted()` falls back to inside the shipped
+// bundle; `NEXT_PUBLIC_APP_PLATFORM` keeps a build from ever resolving as the
+// web app if upstream drops the line from its tracked `.env.tauri`.
+//
+// The two `*_FIXED_QUOTA` values are deliberately not asserted: they are inert
+// in these artifacts (see the note on ENV_VARS in unlock.mjs), and asserting
+// them would freeze a setting that does nothing.
+const EXPECTED_ENV = {
+  NEXT_PUBLIC_APP_PLATFORM: 'tauri',
+  NEXT_PUBLIC_SELF_HOSTED: 'true',
+  SELF_HOSTED: 'true',
+};
 
 for (const rel of [path.join('apps', 'readest-app', '.env.local'), '.env.local']) {
   const file = path.join(root, rel);
@@ -270,10 +319,9 @@ for (const rel of [path.join('apps', 'readest-app', '.env.local'), '.env.local']
       .filter(Boolean)
       .map((match) => [match[1], match[2]]),
   );
-  if (vars['NEXT_PUBLIC_SELF_HOSTED'] === 'true') {
-    ok(`${rel} sets NEXT_PUBLIC_SELF_HOSTED=true`);
-  } else {
-    fail(`${rel} does not set NEXT_PUBLIC_SELF_HOSTED=true`);
+  for (const [key, expected] of Object.entries(EXPECTED_ENV)) {
+    if (vars[key] === expected) ok(`${rel} sets ${key}=${expected}`);
+    else fail(`${rel} sets ${key}=${vars[key] ?? '(unset)'}, expected ${expected}`);
   }
 }
 
