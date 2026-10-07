@@ -2,13 +2,13 @@
 
 English | [中文](README.zh-CN.md)
 
-An automatically built **unlocked** build of [Readest](https://github.com/readest/readest), with the premium client gates removed, published to this repository's Releases.
+An automatically built **unlocked** build of [Readest](https://github.com/readest/readest), with the premium client gates removed, published to this repository's [Releases](https://github.com/hirofumo/readest-unlocked/releases).
 
-This repository is a build recipe, not a source tree. It contains no upstream code: every CI run checks the upstream tag out, applies the patch scripts in `tools/`, verifies the result, builds, and uploads the installers here. Upstream can rewrite anything it likes without creating a merge conflict for anyone.
+This repository is a build recipe, not a source tree and not a fork. It contains no upstream code: every release is built from an exact upstream tag plus the patch scripts in `tools/`, and the complete diff against that tag ships with the release as `unlock.patch` — so what changed is always readable, and never taken on trust.
 
 ## Unlocked client features
 
-All five features below are routed through a single entitlement helper, `isCustomizationAllowed()` in `apps/readest-app/src/utils/access.ts`. The build patch forces that helper to return `true`, so the gates open for every account, including a signed-out free one.
+All five features run through the same client-side entitlement check. These builds force that check open, so the features are available to every account — including a signed-out free one.
 
 | Feature | What it means in the app |
 | --- | --- |
@@ -26,7 +26,7 @@ The service decides these server-side, from the account token. A client build ca
 - the daily AI translation character quota
 - the Send-to-Readest personal email address
 
-One caveat on the last one. Its gate runs through the same single entitlement helper this build opens, so the client half of that gate opens along with everything else: the Send-to-Readest panel asks the official server for an address and reports a load failure for an account the server refuses, where an unpatched build showed the upgrade card instead. The capability itself stays server-decided.
+One caveat on the last one. Its gate runs through the same client-side check this build opens, so the client half of that gate opens along with everything else: the Send-to-Readest panel asks the official server for an address and reports a load failure for an account the server refuses, where an unpatched build showed the upgrade card instead. The capability itself stays server-decided.
 
 ## Custom server URL
 
@@ -79,32 +79,15 @@ This repository has no Apple certificate, so the iOS asset is an honestly **unsi
 
 What the resulting install can do depends on the account you sign with. App Groups are not available to free personal teams, and the reading widget and the share extension both rely on one, so expect those two to be degraded or missing unless you sign with a paid team. The package keeps upstream's bundle id `com.bilingify.readest`, so installing over an App Store copy of Readest requires removing that copy first.
 
-**None of this has been verified on a device from CI.** What the pipeline proves is that the package is structurally correct — see [Verification](#verification) — not that it installs or runs. Treat the first device install as your own test.
+**None of this has been verified on a device from CI.** What the pipeline proves is that the package is structurally correct — see [How a release is verified](#how-a-release-is-verified) — not that it installs or runs. Treat the first device install as your own test.
 
-## How the pipeline works
+## How releases are produced
 
-Triggers:
+Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform below and published as `v<V>-unlocked`; a day without a new upstream version costs nothing but that check. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
 
-| Trigger | Detail |
-| --- | --- |
-| Schedule | Daily at 03:00 UTC. A day without a new upstream version costs one cheap `detect` job and nothing else. |
-| `workflow_dispatch` | Inputs `ref` (upstream tag, branch or sha; empty means the latest upstream release tag) and `force` (rebuild even when a release for this version already exists). |
+Every release comes out of the same recipe: check the upstream tag out, apply the patch scripts in `tools/`, assert the patched sources, build, assert the built bundle, then read every package back before uploading it.
 
-Jobs:
-
-| Job | Purpose |
-| --- | --- |
-| detect | Resolves which upstream version to build, and skips the whole run when a release for that version already exists. |
-| prepare | Creates the release, so the build legs only have to upload assets. |
-| build | A matrix over Windows (`x64`, `arm64`), macOS (`x64`, `arm64`, `universal`) and Linux (`x64`, `arm64`). |
-| build_android | A separate job, because a job-level `if` cannot read the matrix context and Android has to be skipped outright when the signing secrets are not configured. |
-| build_ios | A separate job on a macOS runner: generates the Xcode project the upstream checkout does not carry, builds an unsigned arm64 IPA, and asserts the package's contents. No secret is involved — there is no Apple certificate. |
-| manifest | Publishes `latest.json` and `latest-coexist.json`, assembled from the `.sig` files every leg uploaded, plus upstream's `release-notes.json` for the in-app "recent updates" view. |
-| summary | Reports the result of every leg. |
-
-Every leg does the same thing: check upstream out at the resolved ref, run `tools/unlock.mjs`, assert the patched sources, build, assert the built bundle, upload its assets.
-
-Patching is anchor-based and deliberately fails the build when an anchor moves. Shipping a silently still-locked build is the one outcome that must never happen, so a missing or ambiguous anchor is a hard failure rather than a warning. Two purely cosmetic patches are the exception: they are best-effort and only warn, because refusing to ship a working build over a stray badge would be the wrong trade.
+A patch that no longer fits upstream's code fails the build instead of being skipped: a silently still-locked build is the one outcome this project refuses to publish.
 
 ## Self-update
 
@@ -112,15 +95,15 @@ The app updates itself from this repository's releases, not from readest.com.
 
 Each release publishes a signed updater manifest — `latest.json` for the replacing Android family and the desktop builds, `latest-coexist.json` for the coexisting Android family — together with the `.sig` files the Tauri updater verifies against a public key compiled into the app. The Windows portable zip and the iOS IPA are the exceptions described above and do not update themselves. The private signing key is held only in this repository's secrets and never ships in a build. Keep that private key and its password: because the matching public key is compiled into the app, losing them means no future release can be signed and already-installed apps will stop accepting updates.
 
-## Verification
+## How a release is verified
 
-Three independent layers, none of them a stronger claim than what it actually checks:
+Three checks stand between a patch and a published release, and none of them claims more than it measures:
 
-1. **Source assertions.** `tools/verify.mjs` runs after the patch and before the expensive native build, so a broken patch fails in seconds rather than after a long build.
-2. **The built artifact.** `tools/check-bundle.mjs` runs after the frontend build and asserts the `__READEST_UNLOCKED__` build marker against the JavaScript the app actually ships. This is the difference between "we edited the right file" and "the shipped bundle is unlocked". Packages are then read rather than trusted: each Android APK has its `applicationId`, its ABIs and its signing certificate checked by unpacking it, and the iOS IPA has its bundle id, version, architecture, embedded app extensions and unsigned state checked the same way.
-3. **CI failure.** If either assertion fails, the job fails and produces no artifacts, so a partially patched release is never published.
+1. **The patched sources.** Everything the patch asserts about the source tree is checked before anything is compiled, so a patch that no longer fits upstream's code fails in seconds rather than after a long build.
+2. **The compiled bundle.** The JavaScript the app actually ships is searched for the `__READEST_UNLOCKED__` build marker — the difference between "the right file was edited" and "the released build is unlocked". The patched module also sets `globalThis.__READEST_UNLOCKED__ = true` at runtime, so an installed build can be checked the same way.
+3. **The packages themselves.** Files are read, not trusted. Each Android APK has its application id, its ABIs and its signing certificate checked by unpacking it, and the iOS IPA has its bundle id, version, architecture, embedded app extensions and unsigned state checked the same way.
 
-The patched module also sets `globalThis.__READEST_UNLOCKED__ = true` at runtime, which is what makes layer 2 possible and what an installed build can be checked against.
+A failed check fails the build and produces no artifacts, so a half-patched release is never published.
 
 ## Verifying a download
 
@@ -143,8 +126,9 @@ workflow run that produced the artifacts:
 gh attestation verify Readest-0.12.12-windows-x64-setup.exe --repo hirofumo/readest-unlocked
 ```
 
-That fails unless the file came out of a workflow run in this repository, and it
-reports which commit and which run produced it. What it does **not** claim is
+Any asset works the same way, the Android APKs and the iOS IPA included. The
+command fails unless the file came out of a workflow run in this repository, and
+it reports which commit and which run produced it. What it does **not** claim is
 that the code is harmless. For that, read the patch: every release also carries
 `unlock.patch` — the complete diff against the upstream commit — and `BUILD.md`,
 which names that upstream commit, the recipe commit, the build-time variables,
@@ -180,10 +164,10 @@ unlocks the premium client features for a self-hosted deployment, signed in or
 not. This project applies the same rule to the desktop, Android and iOS builds,
 which upstream does not publish; it does not invent a different one.
 
-What the patch wires up is listed in [TECHNICAL.md](TECHNICAL.md) §9 — the API
-origin, the Node API origin, the account backend and the links the app builds for
-exported annotations. Not covered: the CDN hosts for webfonts and published
-covers.
+Pointing the client at your instance is the **Server URL** entry described under
+[Custom server URL](#custom-server-url) above. It moves the API origin, the Node
+API origin, the account backend and the links the app builds for exported
+annotations; it does not move the CDN hosts for webfonts and published covers.
 
 ### Using it without an account at all
 
@@ -202,27 +186,20 @@ The published binaries keep upstream's copyright notices, license text and proje
 
 This project is not affiliated with, endorsed by or supported by Readest or Bilingify LLC. "Readest" and its logo belong to their owners and are used here only to describe what this build is derived from. Support for this build comes from this repository, not from upstream.
 
-If this build is useful to you, upstream is the thing worth supporting: Readest is an actively developed reader with real infrastructure behind it, and its plans are what pay for that. Nothing here changes the deal for anyone using readest.com — the unlock applies only to builds from this repository, and the same features are already free to anyone running their own server. Bugs in reading, syncing or the reader UI belong in [upstream's tracker](https://github.com/readest/readest/issues); the one thing that belongs here is a patch that stopped applying.
+If this build is useful to you, upstream is the thing worth supporting: Readest is an actively developed reader with real infrastructure behind it, and its plans are what pay for that. Nothing here changes the deal for anyone using readest.com — the unlock applies only to builds from this repository, and the same features are already free to anyone running their own server. Bugs in reading, syncing or the reader UI belong in [upstream's tracker](https://github.com/readest/readest/issues); a problem with these builds themselves — a download that misbehaves, a release that failed — belongs here.
 
 These builds are provided as-is, with no warranty, for personal use. You are responsible for complying with the licenses and terms of any third-party service the app talks to.
 
-## Repository layout
+## What's in this repository
 
 ```
-.github/workflows/build-unlocked.yml   the pipeline
-.github/workflows/preflight.yml        daily patch+verify against upstream's own branch
-helpers/android-keystore.sh            writes the Android signing config after each `tauri android init`
-tools/unlock.mjs                       the patcher
-tools/coexist.mjs                      switches a checkout to the coexisting Android identity
-tools/coexist-android.mjs              re-points the committed src-tauri/gen/android project at that identity
-tools/verify.mjs                       source assertions
-tools/check-bundle.mjs                 built-bundle assertion
-tools/make-manifest.mjs                assembles the signed updater manifests
-tools/make-checksums.mjs               builds SHA256SUMS from the release digests
-tools/make-build-info.mjs              writes the BUILD.md published with a release
-tools/report-failure.mjs               opens — or reuses — one issue for a failed run
-tools/resolve-upstream.mjs             upstream version resolution
-README.md                              this file (English)
-README.zh-CN.md                        Chinese translation
-LICENSE                                AGPL-3.0
+.github/workflows/   the release recipe and the daily check against upstream
+tools/               the patch scripts, and the tooling that assembles a release
+helpers/             small per-platform build helpers
+LICENSE              AGPL-3.0
 ```
+
+The patch scripts are the Corresponding Source for the binaries published here.
+They are plain Node.js files with no build step of their own, and every change
+they make to an upstream file is marked in place, so the recipe can be read
+top to bottom without running anything.
