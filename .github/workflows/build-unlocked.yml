@@ -1186,6 +1186,19 @@ jobs:
         with:
           node-version: 24
 
+      # `gh release upload --clobber` replaces an asset by name and never removes
+      # one, so a renamed or retired asset would stay on the release, still
+      # downloadable, with the manifests knowing nothing about it. The expected
+      # names are written out in the tool, and this runs before anything new is
+      # stamped over the release: an unexpected asset fails the run instead of
+      # being silently blessed by a fresh SHA256SUMS and attestation.
+      - name: Assert the release's asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: node tools/check-release-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$TAG" --version "$VERSION"
+
       - name: Download the signature files
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1243,6 +1256,46 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: SHA256SUMS
+
+      # A release tag is created once, with the first build of a version, and
+      # `gh release create --target` is ignored from then on — so after a rebuild
+      # the release would still link to whatever commit published it first. Point
+      # it at this run instead. Being the last step is deliberate: the pointer
+      # only follows a run that got all the way through publishing the manifests,
+      # the checksums and the provenance that now describe the release. BUILD.md,
+      # uploaded by this same run, records the same commit.
+      - name: Point the release tag at this run's commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || true)
+          if [ "$current" = "$GITHUB_SHA" ]; then
+            echo "$TAG already points at $GITHUB_SHA"
+          elif [ -z "$current" ]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
+            echo "Created $TAG at $GITHUB_SHA"
+          else
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" \
+              -f sha="$GITHUB_SHA" -F force=true > /dev/null
+            echo "Moved $TAG from $current to $GITHUB_SHA"
+          fi
+
+          # The release record carries its own target_commitish hint from creation
+          # time, and moving the tag does not update it, so an API query would tell
+          # a different story from the release page. Keep the two equal.
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.id')
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -f target_commitish="$GITHUB_SHA" > /dev/null
+
+          {
+            echo ""
+            echo "| release tag | now points at |"
+            echo "| --- | --- |"
+            echo "| \`$TAG\` | \`$GITHUB_SHA\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   summary:
