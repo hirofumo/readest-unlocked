@@ -766,6 +766,110 @@ function patchCosmeticUi(root) {
   return skipped;
 }
 
+/* ------------------------------------- Android updater keys are per ABI, too */
+
+/**
+ * Upstream's Android updater asks for `android-arm64` on 64-bit ARM and for
+ * `android-universal` on everything else. That only works while a universal APK
+ * is published, and this project publishes one APK per ABI instead — so without
+ * this patch, armeabi-v7a / x86_64 / x86 devices would be offered nothing at
+ * all. The key is derived from the device arch, in one helper, so the nightly
+ * path, the release check and the download window cannot drift apart.
+ */
+const ANDROID_KEY_HELPER = `/**
+ * ${MARKER} One manifest key per Android ABI.
+ *
+ * Upstream derives it from "is this aarch64?", which needs a universal APK for
+ * every other device. This build publishes one package per ABI, so the key comes
+ * from the arch instead: arm64-v8a, armeabi-v7a, x86_64 and x86 each have their
+ * own entry, and an arch with no package gets no update rather than a wrong one.
+ */
+export const getAndroidPlatformKey = (osArchVal: string): string | null => {
+  switch (osArchVal) {
+    case 'aarch64':
+      return 'android-arm64';
+    case 'arm':
+      return 'android-armv7';
+    case 'x86_64':
+      return 'android-x86_64';
+    case 'x86':
+      return 'android-x86';
+    default:
+      return null;
+  }
+};
+
+`;
+
+const NIGHTLY_HELPER_ANCHOR = `export const getNightlyPlatformKey = (`;
+const NIGHTLY_KEY_ANCHOR = `  if (osTypeVal === 'android')
+    return osArchVal === 'aarch64' ? 'android-arm64' : 'android-universal';`;
+const NIGHTLY_KEY_REPLACEMENT = `  if (osTypeVal === 'android') return getAndroidPlatformKey(osArchVal);`;
+
+const ANDROID_CHECK_ANCHOR = `        if (
+          isNewer &&
+          ('android-arm64' in data.platforms || 'android-universal' in data.platforms)
+        ) {`;
+const ANDROID_CHECK_REPLACEMENT = `        // ${MARKER} Offer the update when this device's own ABI key is present,
+        // rather than upstream's arm64-or-universal pair.
+        const androidKey = getAndroidPlatformKey(osArch());
+        if (isNewer && androidKey && androidKey in data.platforms) {`;
+
+const WINDOW_IMPORT_ANCHOR = `import { setLastShownReleaseNotesVersion } from '@/helpers/updater';`;
+const WINDOW_IMPORT_REPLACEMENT = `import { setLastShownReleaseNotesVersion, getAndroidPlatformKey } from '@/helpers/updater';`;
+
+const WINDOW_KEY_ANCHOR = `        const OS_ARCH = osArch();
+        const platformKey = OS_ARCH === 'aarch64' ? 'android-arm64' : 'android-universal';
+        const arch = OS_ARCH === 'aarch64' ? 'arm64' : 'universal';`;
+const WINDOW_KEY_REPLACEMENT = `        const OS_ARCH = osArch();
+        // ${MARKER} The manifest carries one key per ABI, so every device is
+        // offered the package built for it (upstream only knows arm64/universal).
+        const platformKey = getAndroidPlatformKey(OS_ARCH);
+        if (!platformKey) return;
+        const arch = platformKey.replace('android-', '');`;
+
+function patchAndroidUpdaterKeys(root) {
+  const updaterFile = path.join(root, 'apps', 'readest-app', 'src', 'helpers', 'updater.ts');
+  const { text: originalUpdater, eol: updaterEol } = readText(updaterFile);
+  if (originalUpdater.includes('getAndroidPlatformKey')) {
+    log('updater.ts: Android manifest keys already per ABI');
+  } else {
+    let updater = replaceOnce(
+      originalUpdater,
+      NIGHTLY_HELPER_ANCHOR,
+      ANDROID_KEY_HELPER + NIGHTLY_HELPER_ANCHOR,
+      'updater.ts/getAndroidPlatformKey',
+    );
+    updater = replaceOnce(updater, NIGHTLY_KEY_ANCHOR, NIGHTLY_KEY_REPLACEMENT, 'updater.ts/nightly key');
+    updater = replaceOnce(updater, ANDROID_CHECK_ANCHOR, ANDROID_CHECK_REPLACEMENT, 'updater.ts/release check');
+    writeText(updaterFile, updater, updaterEol);
+    log('updater.ts: Android update keys are derived from the device ABI');
+  }
+
+  const windowFile = path.join(
+    root,
+    'apps',
+    'readest-app',
+    'src',
+    'components',
+    'UpdaterWindow.tsx',
+  );
+  const { text: originalWindow, eol: windowEol } = readText(windowFile);
+  if (originalWindow.includes('getAndroidPlatformKey')) {
+    log('UpdaterWindow.tsx: Android manifest key already per ABI');
+  } else {
+    let windowText = replaceOnce(
+      originalWindow,
+      WINDOW_IMPORT_ANCHOR,
+      WINDOW_IMPORT_REPLACEMENT,
+      'UpdaterWindow.tsx/import',
+    );
+    windowText = replaceOnce(windowText, WINDOW_KEY_ANCHOR, WINDOW_KEY_REPLACEMENT, 'UpdaterWindow.tsx/key');
+    writeText(windowFile, windowText, windowEol);
+    log('UpdaterWindow.tsx: downloads the package built for this device ABI');
+  }
+}
+
 /* ------------------------------------------------------- build environment */
 
 /**
@@ -851,6 +955,7 @@ patchTauriConfig(root);
 patchAppConstants(root);
 patchAboutWindow(root);
 patchServerUrlSetting(root);
+patchAndroidUpdaterKeys(root);
 patchTranslations(root);
 const skippedCosmetic = patchCosmeticUi(root);
 writeBuildEnv(root);

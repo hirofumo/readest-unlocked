@@ -366,6 +366,79 @@ if (cosmeticMissing.length) {
   console.log('       (features are unlocked; a badge or upgrade entry may still be visible)');
 }
 
+/* 8. Android update keys (one per ABI) --------------------------------------- */
+
+const updaterFile = path.join(root, 'apps', 'readest-app', 'src', 'helpers', 'updater.ts');
+const updaterSrc = read(updaterFile);
+if (updaterSrc === null) {
+  fail(`missing ${updaterFile}`);
+} else {
+  const text = lf(updaterSrc);
+
+  if (text.includes('export const getAndroidPlatformKey')) {
+    ok('updater.ts derives the Android manifest key from the device ABI');
+  } else {
+    fail('updater.ts has no getAndroidPlatformKey helper');
+  }
+
+  const ANDROID_KEY_MAP = [
+    ['aarch64', 'android-arm64'],
+    ['arm', 'android-armv7'],
+    ['x86_64', 'android-x86_64'],
+    ['x86', 'android-x86'],
+  ];
+  for (const [arch, key] of ANDROID_KEY_MAP) {
+    if (new RegExp(`case '${arch}':\\s*\\n\\s*return '${key}';`).test(text)) {
+      ok(`the Android key helper maps ${arch} to ${key}`);
+    } else {
+      fail(`the Android key helper does not map ${arch} to ${key}`);
+    }
+  }
+
+  if (text.includes('return getAndroidPlatformKey(osArchVal);')) {
+    ok('the nightly channel uses the per-ABI key');
+  } else {
+    fail('the nightly channel does not use the per-ABI key');
+  }
+
+  if (text.includes('androidKey in data.platforms')) {
+    ok('the Android release check looks for this device’s ABI');
+  } else {
+    fail('the Android release check does not look for this device’s ABI');
+  }
+
+  if (text.includes('android-universal')) {
+    fail("updater.ts still asks for 'android-universal', which this project no longer publishes");
+  } else {
+    ok('updater.ts asks for no Android key this project stopped publishing');
+  }
+}
+
+const updaterWindowFile = path.join(
+  root,
+  'apps',
+  'readest-app',
+  'src',
+  'components',
+  'UpdaterWindow.tsx',
+);
+const updaterWindowSrc = read(updaterWindowFile);
+if (updaterWindowSrc === null) {
+  fail(`missing ${updaterWindowFile}`);
+} else {
+  const text = lf(updaterWindowSrc);
+  if (text.includes('getAndroidPlatformKey(OS_ARCH)')) {
+    ok('the update window downloads the package for this device ABI');
+  } else {
+    fail('the update window does not resolve the package from the device ABI');
+  }
+  if (text.includes('android-universal')) {
+    fail("UpdaterWindow.tsx still asks for 'android-universal'");
+  } else {
+    ok('UpdaterWindow.tsx asks for no Android key this project stopped publishing');
+  }
+}
+
 /* summary ------------------------------------------------------------------- */
 
 console.log('');

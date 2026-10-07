@@ -75,7 +75,7 @@ Windows 安装包与 Linux AppImage 本身就是更新产物，因此带签名�
 
 桌面端的情况不同：桌面构建同样保留上游的 identifier，因此读取的是官方应用用过的同一个应用数据目录，书库、设置与阅读进度无需重新导入即可延续。这是 identifier 未改动的结果，而不是另外做过验证的保证。
 
-**该下哪个 APK，以及谁自更新。** 四个 ABI 是分开发布的：`arm64-v8a` 给现在的手机与平板，`armeabi-v7a` 给较老的 32 位 ARM 设备，`x86_64` / `x86` 给模拟器与 x86 设备。两个家族是同一个应用的两个 application id，所以先选家族、再选 ABI。应用内更新只提供给 64 位 ARM 设备——应用在那里按 `android-arm64` 取包，清单里也只有这个键；其它 ABI 上应用会去找 `android-universal`，而本项目已不再发布它，所以那些设备请下载与自己匹配的 APK 来更新，用 [Obtainium](https://github.com/ImranR98/Obtainium) 跟踪是最省事的办法（见下文）。
+**该下哪个 APK，以及谁自更新。** 四个 ABI 是分开发布的：`arm64-v8a` 给现在的手机与平板，`armeabi-v7a` 给较老的 32 位 ARM 设备，`x86_64` / `x86` 给模拟器与 x86 设备。两个家族是同一个应用的两个 application id，所以先选家族、再选 ABI。**每个 ABI 都有应用内更新**：应用会按设备取对应的清单键（`android-arm64`、`android-armv7`、`android-x86_64`、`android-x86`），而每份清单都带齐这四个键，各自指向为该 ABI 构建的包。这个按键映射是本构建补丁的一部分——未打补丁的上游构建只认识 `android-arm64` 与 `android-universal`，在其它 ABI 上什么也取不到。
 
 ### iOS 版本是未签名的
 

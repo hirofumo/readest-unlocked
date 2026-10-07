@@ -67,15 +67,24 @@ const DESKTOP_ENTRIES = [
   },
 ];
 
-// Android clients compute their key in `src/helpers/updater.ts`: `android-arm64`
-// on 64-bit ARM, `android-universal` for anything else. Only the first can be
-// honoured now that no single APK covers every ABI, so each family offers exactly
-// that key; the other devices update by hand or through Obtainium. Adding
-// `android-x86_64` / `android-x86` entries here would change nothing until that
-// client-side mapping learns about them.
+// Android clients derive their key from the device arch, and this recipe patches
+// that derivation (`getAndroidPlatformKey` in `src/helpers/updater.ts`) to ask for
+// one key per ABI: android-arm64, android-armv7, android-x86_64 and android-x86.
+// Each manifest lists all four, each pointing at the APK built for that ABI, so
+// every device is offered the package that fits it.
 const ANDROID_ENTRIES = {
-  replace: [{ keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-replace-arm64-v8a.apk` }],
-  coexist: [{ keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-coexist-arm64-v8a.apk` }],
+  replace: [
+    { keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-replace-arm64-v8a.apk` },
+    { keys: ['android-armv7'], asset: (v) => `Readest-${v}-android-replace-armeabi-v7a.apk` },
+    { keys: ['android-x86_64'], asset: (v) => `Readest-${v}-android-replace-x86_64.apk` },
+    { keys: ['android-x86'], asset: (v) => `Readest-${v}-android-replace-x86.apk` },
+  ],
+  coexist: [
+    { keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-coexist-arm64-v8a.apk` },
+    { keys: ['android-armv7'], asset: (v) => `Readest-${v}-android-coexist-armeabi-v7a.apk` },
+    { keys: ['android-x86_64'], asset: (v) => `Readest-${v}-android-coexist-x86_64.apk` },
+    { keys: ['android-x86'], asset: (v) => `Readest-${v}-android-coexist-x86.apk` },
+  ],
 };
 
 function fail(message) {
