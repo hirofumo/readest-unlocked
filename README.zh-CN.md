@@ -42,21 +42,23 @@
 
 ```
 Windows   x64 / arm64              安装包 + sig、便携 zip
-macOS     x64 / arm64 / universal  dmg、更新用 tarball + sig
+macOS     x64 / arm64              dmg、更新用 tarball + sig
 Linux     x64 / arm64              AppImage + sig、deb、rpm
-Android   replace / coexist        arm64-v8a、armeabi-v7a、universal（各自 + sig）
+Android   replace / coexist        arm64-v8a、armeabi-v7a、x86_64、x86（各自 + sig）
 iOS       arm64                    未签名 ipa（需自签安装）
 ```
 
 | 平台 | 产物 |
 | --- | --- |
 | Windows | `Readest-<V>-windows-<arch>-setup.exe` 及其 `.sig`；`Readest-<V>-windows-<arch>-portable.zip` |
-| macOS | `Readest-<V>-macos-<variant>.dmg`；`Readest-<V>-macos-<variant>-updater.tar.gz` 及其 `.sig` |
+| macOS | `Readest-<V>-macos-<arch>.dmg`；`Readest-<V>-macos-<arch>-updater.tar.gz` 及其 `.sig` |
 | Linux | `Readest-<V>-linux-<arch>.AppImage` 及其 `.sig`；`Readest-<V>-linux-<arch>.deb`；`Readest-<V>-linux-<arch>.rpm` |
 | Android | `Readest-<V>-android-<family>-<abi>.apk` 及其 `.sig` |
 | iOS | `Readest-<V>-ios-arm64.ipa` |
 
 Windows 安装包与 Linux AppImage 本身就是更新产物，因此带签名。Windows 便携 zip 不会自更新：更新器下载的是清单指向的文件并把它当作可执行程序启动，而 zip 无法充当这个产物。iOS 的 IPA 是第二个例外，原因不同：Tauri 的更新器根本不支持 iOS，所以没有东西需要签名，也没有东西可以写进清单。其余平台仍然自更新。
+
+每个平台都按架构各出一份——不再有 macOS 通用包，也不再有 Android 通用 APK；Android 的每个 ABI 单独发布，好让你挑到与设备匹配的那一个。
 
 ### 两个 Android 版本家族
 
@@ -72,6 +74,8 @@ Windows 安装包与 Linux AppImage 本身就是更新产物，因此带签名�
 两个家族使用同一份自行生成的 Android 密钥签名。该密钥不是上游的密钥，因此两个家族都无法就地更新官方应用，官方应用也无法就地更新这两个家族中的任何一个。签名与已安装应用不一致时 Android 会拒绝安装，所以必须先卸载官方版本——这会清除应用本地数据，除非从备份恢复——或者改用并存版。
 
 桌面端的情况不同：桌面构建同样保留上游的 identifier，因此读取的是官方应用用过的同一个应用数据目录，书库、设置与阅读进度无需重新导入即可延续。这是 identifier 未改动的结果，而不是另外做过验证的保证。
+
+**该下哪个 APK，以及谁自更新。** 四个 ABI 是分开发布的：`arm64-v8a` 给现在的手机与平板，`armeabi-v7a` 给较老的 32 位 ARM 设备，`x86_64` / `x86` 给模拟器与 x86 设备。两个家族是同一个应用的两个 application id，所以先选家族、再选 ABI。应用内更新只提供给 64 位 ARM 设备——应用在那里按 `android-arm64` 取包，清单里也只有这个键；其它 ABI 上应用会去找 `android-universal`，而本项目已不再发布它，所以那些设备请下载与自己匹配的 APK 来更新，用 [Obtainium](https://github.com/ImranR98/Obtainium) 跟踪是最省事的办法（见下文）。
 
 ### iOS 版本是未签名的
 
@@ -133,7 +137,7 @@ gh attestation verify Readest-0.12.12-windows-x64-setup.exe --repo hirofumo/read
 - **macOS**：首次打开会被 Gatekeeper 拦下。执行 `xattr -cr /Applications/Readest.app`，然后再打开应用。
 - **Android**：选择 APK 前请先看上面的[两个 Android 版本家族](#两个-android-版本家族)。
 - **iOS**：IPA 是未签名的，必须先用自己的 Apple ID 签名才能安装——见上面的 [iOS 版本是未签名的](#ios-版本是未签名的)，其中包括免费 Apple ID 做不到的事。
-- **Android 自动更新**：产物命名是稳定的，因此 [Obtainium](https://github.com/ImranR98/Obtainium) 可以直接跟随本仓库——把 `https://github.com/hirofumo/readest-unlocked` 添加为 GitHub 源，再用正则限定到你已安装的那个 APK，例如 `Readest-[\d.]+-android-replace-arm64-v8a\.apk` 或 `Readest-[\d.]+-android-coexist-universal\.apk`。请选与设备上已装家族匹配的那条：两个家族的 application id 不同，无法互相更新。
+- **Android 自动更新**：产物命名是稳定的，因此 [Obtainium](https://github.com/ImranR98/Obtainium) 可以直接跟随本仓库——把 `https://github.com/hirofumo/readest-unlocked` 添加为 GitHub 源，再用正则限定到你已安装的那个 APK，例如 `Readest-[\d.]+-android-replace-arm64-v8a\.apk` 或 `Readest-[\d.]+-android-coexist-armeabi-v7a\.apk`。请选与设备上已装家族**和 ABI**匹配的那条：两个家族的 application id 不同，无法互相更新。
 
 ## 自托管
 

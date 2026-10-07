@@ -126,7 +126,7 @@ jobs:
 
           Still decided by the upstream service, not unlockable in a client build: Readest Cloud storage quota, daily AI translation quota, and the Send-to-Readest email address.
 
-          Assets are named Readest-<version>-<platform>-<arch or variant>-<type>. Windows and macOS ship one build per architecture plus a universal macOS build; Linux ships x64 and arm64; Android ships two families (replace and coexist) in three ABIs each; iOS ships one unsigned arm64 IPA. In-app updates come from latest.json for the desktop builds and the replacing Android family, and from latest-coexist.json for the coexisting family. The Windows portable download is a zip and does not update itself, and iOS cannot self-update at all — the IPA has to be re-signed with your own Apple ID and reinstalled.
+          Assets are named Readest-<version>-<platform>-<arch or variant>-<type>. Windows, macOS and Linux ship one build per architecture (x64 and arm64 each); Android ships two families (replace and coexist) in four ABIs each — arm64-v8a, armeabi-v7a, x86_64 and x86 — and iOS ships one unsigned arm64 IPA. There is no universal macOS build and no universal Android APK: the Android one was the slowest work in the whole pipeline, and every ABI it covered is published on its own instead. In-app updates come from latest.json for the desktop builds and the replacing Android family, and from latest-coexist.json for the coexisting family; on Android the app asks for android-arm64 on 64-bit ARM and for an android-universal entry otherwise, so non-arm64 devices update through Obtainium or by hand. The Windows portable download is a zip and does not update itself, and iOS cannot self-update at all — the IPA has to be re-signed with your own Apple ID and reinstalled.
 
           Readest is AGPL-3.0. These installers are unmodified upstream code plus the patch scripts in this repository. They are not signed by a code-signing certificate, so Windows SmartScreen and macOS Gatekeeper will warn on first launch, and the iOS IPA must be re-signed before it installs."
 
@@ -289,13 +289,6 @@ jobs:
             rust_targets: aarch64-apple-darwin
             target: aarch64-apple-darwin
             bundle_args: '--bundles app,dmg'
-          - os: macos-latest
-            name: macos-universal
-            release: macos
-            arch: universal
-            rust_targets: x86_64-apple-darwin,aarch64-apple-darwin
-            target: universal-apple-darwin
-            bundle_args: '--bundles app,dmg'
           - os: ubuntu-22.04
             name: linux-x64
             release: linux
@@ -365,14 +358,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          # macOS shares one cache, written by the universal leg and read by all
-          # three. Its target holds both architectures, so the thin legs find
-          # theirs there, and three separate caches would push the repository
-          # past the 10 GB Actions cache budget — entries were being evicted,
-          # which is why some legs rebuilt from scratch (41 minutes against 32
-          # for the same work on a warm cache).
-          key: ${{ matrix.config.release == 'macos' && 'macos-cargo' || format('{0}-cargo', matrix.config.name) }}
-          save-if: ${{ matrix.config.release != 'macos' || matrix.config.name == 'macos-universal' }}
+          # One cache per leg, named after the leg, so each entry has exactly one
+          # writer. macOS used to share a single entry written by the universal
+          # leg, whose target held both triples and therefore covered the thin
+          # legs too; that leg is gone, so the two macOS legs now own their own
+          # entries — sharing one would leave whichever leg does not write it
+          # compiling cold on every release. Cost and the 10 GB budget: see
+          # TECHNICAL.md §6.
+          key: ${{ format('{0}-cargo', matrix.config.name) }}
 
       # The npm cli-cef bundles the AppImage with a broken quick-sharun fork.
       # Build the CLI from readest/tauri instead; rev-pinned, and the marker
@@ -584,7 +577,15 @@ jobs:
   # ---------------------------------------------------------------------------
   # Android: skipped outright until the signing secrets exist. Builds two
   # families — one that replaces the official app, one that installs beside it —
-  # in three ABIs each.
+  # in four ABIs each: the two device ones (arm64-v8a, armeabi-v7a) and the two
+  # emulator ones (x86_64, x86).
+  #
+  # There is deliberately no universal APK: it was the long pole of the whole
+  # release (31–40 minutes against 12–16 for a single ABI, because it compiles
+  # every ABI in one job), and the ABIs it covered are now published on their own.
+  # What that costs is on the client side and is written down in README §Android:
+  # the app asks for `android-arm64` on 64-bit ARM and `android-universal`
+  # otherwise, so non-arm64 devices get their updates from Obtainium or by hand.
   # ---------------------------------------------------------------------------
   build_android:
     name: Build android (${{ matrix.family }}, ${{ matrix.variant }})
@@ -594,12 +595,11 @@ jobs:
       fail-fast: false
       matrix:
         # One job per artifact. The two families are the same sources with
-        # different application ids, and the three APKs are independent Gradle
-        # builds. The universal APK compiles every ABI and is the long pole; the
-        # single-ABI ones finish in roughly half the time beside it, where
-        # running all three in one job made each leg wait for the sum of them.
+        # different application ids, and every APK is an independent Gradle
+        # build, so running them side by side keeps each leg at the cost of one
+        # ABI instead of the sum of them.
         family: [replace, coexist]
-        variant: [universal, arm64-v8a, armeabi-v7a]
+        variant: [arm64-v8a, armeabi-v7a, x86_64, x86]
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -743,11 +743,10 @@ jobs:
           fi
           bash .recipe/helpers/android-keystore.sh
 
-      # One build per job. The universal variant is the only one that compiles
-      # every ABI — a single-target build repackages what the Rust build already
-      # produced for that ABI. All of them write the same
-      # app-universal-release.apk path, which is why each job reads it straight
-      # after its own build.
+      # One build per job, each one targeting a single ABI. They all write the
+      # same app-universal-release.apk path — "universal" there is the Gradle
+      # flavor, not a multi-ABI package — which is why each job reads the file
+      # straight after its own build.
       - name: Build the APK
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
@@ -762,10 +761,13 @@ jobs:
           cd apps/readest-app
           apk=src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
 
+          # The CLI's target names are the rustc arch, not the ABI directory
+          # name: i686 is the one that lands in lib/x86/.
           case "${{ matrix.variant }}" in
-            universal)   pnpm tauri android build ;;
             arm64-v8a)   pnpm tauri android build -t aarch64 ;;
             armeabi-v7a) pnpm tauri android build -t armv7 ;;
+            x86_64)      pnpm tauri android build -t x86_64 ;;
+            x86)         pnpm tauri android build -t i686 ;;
             *) echo "::error::unknown variant ${{ matrix.variant }}"; exit 1 ;;
           esac
 
@@ -839,14 +841,10 @@ jobs:
           # nothing looked inside the file.
           abis=$(unzip -l "$apk" | grep -oE 'lib/[^/]+/' | sed 's#lib/##; s#/##' | sort -u | tr '\n' ' ')
           echo "ABIs in $apk: ${abis:-none}"
-          if [ "$variant" = 'universal' ]; then
-            for want in arm64-v8a armeabi-v7a x86 x86_64; do
-              case " $abis " in
-                *" $want "*) ;;
-                *) echo "::error::$apk does not contain $want"; exit 1 ;;
-              esac
-            done
-          elif [ "$abis" != "$variant " ]; then
+          # Every APK carries exactly one ABI, and the variant name is that ABI's
+          # directory name — including x86 and x86_64, whose CLI target names
+          # differ (i686).
+          if [ "$abis" != "$variant " ]; then
             echo "::error::$apk should contain only $variant, found: ${abis:-none}"
             exit 1
           fi

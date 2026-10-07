@@ -48,10 +48,13 @@ function arg(name, fallback) {
 /* ------------------------------------------------------------- the contract */
 
 const WINDOWS_ARCHES = ['x64', 'arm64'];
-const MACOS_VARIANTS = ['x64', 'arm64', 'universal'];
+const MACOS_VARIANTS = ['x64', 'arm64'];
 const LINUX_ARCHES = ['x64', 'arm64'];
 const ANDROID_FAMILIES = ['replace', 'coexist'];
-const ANDROID_ABIS = ['universal', 'arm64-v8a', 'armeabi-v7a'];
+// The ABI directory names inside the APK, which is also what the asset names and
+// the workflow's variant names use. The CLI's target names differ for one of
+// them: `-t i686` builds the x86 package.
+const ANDROID_ABIS = ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'];
 
 function contract(version) {
   const expected = new Set();

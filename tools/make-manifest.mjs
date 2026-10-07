@@ -58,10 +58,6 @@ const DESKTOP_ENTRIES = [
     asset: (v) => `Readest-${v}-macos-arm64-updater.tar.gz`,
   },
   {
-    keys: ['darwin-universal', 'darwin-universal-app'],
-    asset: (v) => `Readest-${v}-macos-universal-updater.tar.gz`,
-  },
-  {
     keys: ['linux-x86_64', 'linux-x86_64-appimage'],
     asset: (v) => `Readest-${v}-linux-x64.AppImage`,
   },
@@ -71,15 +67,15 @@ const DESKTOP_ENTRIES = [
   },
 ];
 
+// Android clients compute their key in `src/helpers/updater.ts`: `android-arm64`
+// on 64-bit ARM, `android-universal` for anything else. Only the first can be
+// honoured now that no single APK covers every ABI, so each family offers exactly
+// that key; the other devices update by hand or through Obtainium. Adding
+// `android-x86_64` / `android-x86` entries here would change nothing until that
+// client-side mapping learns about them.
 const ANDROID_ENTRIES = {
-  replace: [
-    { keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-replace-arm64-v8a.apk` },
-    { keys: ['android-universal'], asset: (v) => `Readest-${v}-android-replace-universal.apk` },
-  ],
-  coexist: [
-    { keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-coexist-arm64-v8a.apk` },
-    { keys: ['android-universal'], asset: (v) => `Readest-${v}-android-coexist-universal.apk` },
-  ],
+  replace: [{ keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-replace-arm64-v8a.apk` }],
+  coexist: [{ keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-coexist-arm64-v8a.apk` }],
 };
 
 function fail(message) {

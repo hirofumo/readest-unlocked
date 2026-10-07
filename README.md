@@ -42,21 +42,23 @@ Not covered: the CDN hosts for webfonts and published covers, and the readest.co
 
 ```
 Windows   x64 / arm64              installer + sig, portable zip
-macOS     x64 / arm64 / universal  dmg, updater tarball + sig
+macOS     x64 / arm64              dmg, updater tarball + sig
 Linux     x64 / arm64              AppImage + sig, deb, rpm
-Android   replace / coexist        arm64-v8a, armeabi-v7a, universal (each + sig)
+Android   replace / coexist        arm64-v8a, armeabi-v7a, x86_64, x86 (each + sig)
 iOS       arm64                    unsigned ipa (sign it yourself)
 ```
 
 | Platform | Assets |
 | --- | --- |
 | Windows | `Readest-<V>-windows-<arch>-setup.exe` and its `.sig`; `Readest-<V>-windows-<arch>-portable.zip` |
-| macOS | `Readest-<V>-macos-<variant>.dmg`; `Readest-<V>-macos-<variant>-updater.tar.gz` and its `.sig` |
+| macOS | `Readest-<V>-macos-<arch>.dmg`; `Readest-<V>-macos-<arch>-updater.tar.gz` and its `.sig` |
 | Linux | `Readest-<V>-linux-<arch>.AppImage` and its `.sig`; `Readest-<V>-linux-<arch>.deb`; `Readest-<V>-linux-<arch>.rpm` |
 | Android | `Readest-<V>-android-<family>-<abi>.apk` and its `.sig` |
 | iOS | `Readest-<V>-ios-arm64.ipa` |
 
 The Windows installer and the Linux AppImage are themselves the updater artifacts, which is why they carry signatures. The Windows portable zip does not update itself: the updater downloads whatever the manifest points at and launches it as an executable, so a zip cannot be that artifact. The iOS IPA is the second exception, for a different reason: the Tauri updater has no iOS support, so there is nothing to sign and nothing to point a manifest at. Every other platform still self-updates.
+
+Every platform ships one build per architecture — there is no macOS universal build and no universal Android APK any more. Each Android ABI is published on its own so a download can be picked that matches the device.
 
 ### The two Android families
 
@@ -72,6 +74,8 @@ The About dialog states which of the two is installed.
 Both families are signed with the same self-generated Android key. That key is not upstream's, so the official app cannot be updated in place by either family, and neither family can be updated in place over the official app. Android rejects an install whose signature differs from the installed one, so an official install has to be removed first — which clears app-local data, unless it is restored from a backup — or the coexisting family is used instead.
 
 On the desktop the position is different: those builds also keep upstream's identifier, so they read the same application data directory the official app used, and the library, settings and reading progress carry over without a re-import. That follows from the identifier being unchanged rather than from a separate test.
+
+**Which APK, and what updates itself.** The four ABIs are published separately: `arm64-v8a` for current phones and tablets, `armeabi-v7a` for older 32-bit ARM devices, and `x86_64` / `x86` for emulators and x86 hardware. Each family is the same app under a different application id, so pick the family first and the ABI second. In-app updates are offered to 64-bit ARM devices — the app asks for `android-arm64` there, and the manifests carry that entry. On any other ABI the app looks for an `android-universal` entry, which this project no longer publishes: those devices update by downloading the APK that matches them, with [Obtainium](https://github.com/ImranR98/Obtainium) the comfortable way to do it (see below).
 
 ### The iOS build is unsigned
 
@@ -147,9 +151,9 @@ The artifacts are not signed by a code-signing certificate.
   directly — add `https://github.com/hirofumo/readest-unlocked` as a GitHub
   source and narrow it to the APK you installed, for example
   `Readest-[\d.]+-android-replace-arm64-v8a\.apk` or
-  `Readest-[\d.]+-android-coexist-universal\.apk`. Pick the regex that matches
-  the family already on the device: the two have different application ids and
-  cannot update each other.
+  `Readest-[\d.]+-android-coexist-armeabi-v7a\.apk`. Pick the regex that matches
+  the family and the ABI already on the device: the two families have different
+  application ids and cannot update each other.
 
 ## Self-hosting
 
