@@ -23,6 +23,7 @@ body:
         - Linux (deb / rpm)
         - Android (replacing family)
         - Android (coexisting family)
+        - iOS
         - Not platform-specific
     validations:
       required: true

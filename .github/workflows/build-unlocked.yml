@@ -126,9 +126,9 @@ jobs:
 
           Still decided by the upstream service, not unlockable in a client build: Readest Cloud storage quota, daily AI translation quota, and the Send-to-Readest email address.
 
-          Assets are named Readest-<version>-<platform>-<arch or variant>-<type>. Windows and macOS ship one build per architecture plus a universal macOS build; Linux ships x64 and arm64; Android ships two families (replace and coexist) in three ABIs each. In-app updates come from latest.json for the desktop builds and the replacing Android family, and from latest-coexist.json for the coexisting family. The Windows portable download is a zip and does not update itself.
+          Assets are named Readest-<version>-<platform>-<arch or variant>-<type>. Windows and macOS ship one build per architecture plus a universal macOS build; Linux ships x64 and arm64; Android ships two families (replace and coexist) in three ABIs each; iOS ships one unsigned arm64 IPA. In-app updates come from latest.json for the desktop builds and the replacing Android family, and from latest-coexist.json for the coexisting family. The Windows portable download is a zip and does not update itself, and iOS cannot self-update at all — the IPA has to be re-signed with your own Apple ID and reinstalled.
 
-          Readest is AGPL-3.0. These installers are unmodified upstream code plus the patch scripts in this repository. They are not signed by a code-signing certificate, so Windows SmartScreen and macOS Gatekeeper will warn on first launch."
+          Readest is AGPL-3.0. These installers are unmodified upstream code plus the patch scripts in this repository. They are not signed by a code-signing certificate, so Windows SmartScreen and macOS Gatekeeper will warn on first launch, and the iOS IPA must be re-signed before it installs."
 
             gh release create "$TAG" \
               --title "Readest $VERSION (unlocked build)" \
@@ -857,6 +857,296 @@ jobs:
           gh release upload "$TAG" "$apk" "$apk.sig" --clobber
 
   # ---------------------------------------------------------------------------
+  # iOS: one unsigned, arm64-only IPA. No Apple certificate is configured for
+  # this repository, so the package is honestly unsigned — the user re-signs it
+  # with their own Apple ID before it installs. That is also why this leg has no
+  # secret to gate on: the only thing it needs from `detect` is whether this
+  # version has to be built at all.
+  #
+  # The Tauri updater does not support iOS, so this artifact carries no .sig and
+  # deliberately does not appear in latest.json / latest-coexist.json. See
+  # TECHNICAL.md §7 and §13.
+  # ---------------------------------------------------------------------------
+  build_ios:
+    name: Build ios (arm64)
+    needs: [detect, prepare]
+    if: needs.detect.outputs.build == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 240
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out upstream Readest
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing in this workflow pushes, so the token does not belong in
+          # the runner's git config where a dependency lifecycle script could
+          # read it and push with this job's `contents: write`.
+          persist-credentials: false
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ needs.detect.outputs.ref }}
+
+      - name: Initialize the submodules
+        run: git submodule update --init --recursive
+
+      - name: Check out the build recipe
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing in this workflow pushes, so the token does not belong in
+          # the runner's git config where a dependency lifecycle script could
+          # read it and push with this job's `contents: write`.
+          persist-credentials: false
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .recipe
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          # Device builds only: the IPA is re-signed by the user, who can do
+          # nothing with a simulator bundle.
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          # No other leg builds the iOS triple, so this entry has exactly one
+          # writer without a `save-if` guard. It costs roughly another 1.4 GB
+          # against a repository cache budget that is already slightly past
+          # 10 GB — the alternative is a cold iOS Rust compile on every release
+          # (see TECHNICAL.md §6, "cache budget").
+          key: ios-cargo
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Apply the unlock patch
+        run: node .recipe/tools/unlock.mjs
+
+      - name: Verify the patch (sources)
+        run: node .recipe/tools/verify.mjs
+
+      # Same reason as the other legs: some upstream build steps run
+      # `git checkout .` to undo files they generated, and committing first
+      # makes that restore the patch instead of reverting it.
+      - name: Snapshot the patched tree
+        run: |
+          git config user.email "ci@readest-unlocked.invalid"
+          git config user.name "readest-unlocked ci"
+          # The recipe checkout sits inside this workspace; keep it out of the
+          # snapshot commit so the diff stays the patch and nothing else.
+          echo ".recipe/" >> .git/info/exclude
+          git add -A
+          git commit -m "chore: apply unlocked-build patch" --no-verify
+
+      - name: Stage the pdf.js vendor assets
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      # `tauri ios init` runs xcodegen, which the macOS runner image does not
+      # ship. brew is idempotent: on an image that already has xcodegen this is
+      # a no-op.
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # Upstream force-tracks 16 files under gen/apple, but the Xcode project it
+      # ships also needs files upstream never committed: Sources/Readest/main.mm
+      # (+ bindings/bindings.h), LaunchScreen.storyboard, Assets.xcassets,
+      # assets/ and both generated Info.plists. `tauri ios build` reads
+      # gen/apple/Readest_iOS/Info.plist as an *input* — tauri-cli merges it into
+      # the app plist — so a fresh checkout cannot build iOS at all.
+      #
+      # Deleting gen/apple first is what makes the CLI render its own template
+      # project.yml, whose `info:` block is what makes xcodegen write that
+      # missing plist. Upstream's own project.yml uses INFOPLIST_FILE instead,
+      # so it never generates one.
+      - name: Generate the iOS project
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+
+          rm -rf src-tauri/gen/apple
+          env -u FORCE_COLOR pnpm tauri ios init --skip-targets-install
+
+          # Real icons into the asset catalog the template just created.
+          pnpm tauri icon ../../data/icons/readest-book.png
+
+          # Put upstream's committed gen/apple files back: project.yml,
+          # project.pbxproj and the hand-tracked extension sources and
+          # entitlements. Everything generated above is untracked and ignored,
+          # so it survives this.
+          git checkout .
+
+          # Second pass, this time with upstream's own project.yml: that is what
+          # generates ReadestWidget/Info.plist, which the committed project file
+          # references and upstream never committed. The project file this pass
+          # writes is discarded by the checkout below, so the build keeps using
+          # the pbxproj upstream ships (TECHNICAL.md §14 explains both passes).
+          #
+          # FORCE_COLOR stays out of both xcodegen runs: xcodegen expands
+          # `${FORCE_COLOR}` from the generating shell and bakes the literal
+          # value into the "Build Rust Code" script phase, which upstream
+          # documents in apps/readest-app/scripts/release-ios-appstore.sh.
+          ( cd src-tauri/gen/apple && env -u FORCE_COLOR xcodegen generate )
+          git checkout .
+
+          # Fail loudly and cheaply, before the expensive compile, when the
+          # scaffold the committed project depends on is incomplete.
+          for f in project.yml \
+                   Sources/Readest/main.mm \
+                   Sources/Readest/bindings/bindings.h \
+                   LaunchScreen.storyboard \
+                   Assets.xcassets/Contents.json \
+                   Readest_iOS/Info.plist \
+                   ReadestWidget/Info.plist \
+                   Readest.xcodeproj/project.pbxproj; do
+            if [ ! -e "src-tauri/gen/apple/$f" ]; then
+              echo "::error::the iOS scaffold is missing src-tauri/gen/apple/$f"
+              exit 1
+            fi
+          done
+          if ! compgen -G "src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/*.png" > /dev/null; then
+            echo "::error::no iOS app icons were generated"
+            exit 1
+          fi
+
+          echo "iOS scaffold:"
+          ( cd src-tauri/gen/apple && find . -maxdepth 2 | sort )
+
+      # `--no-sign` is what makes an IPA buildable without an Apple
+      # certificate: it archives with code signing disabled and zips the .app
+      # into Payload/ itself (tauri-cli >= 2.11.0, and this workspace pins
+      # 2.11.4). No TAURI_SIGNING_PRIVATE_KEY here on purpose — the iOS path
+      # produces no updater artifact to sign.
+      - name: Build the IPA
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: |
+          set -euo pipefail
+          cd apps/readest-app
+          pnpm tauri ios build --no-sign
+
+      # The sources look right; prove the artifact is right too. The unlock
+      # marker is grepped here rather than in the IPA below because the frontend
+      # is brotli-compressed into the Rust static library, so it is not
+      # searchable inside the package.
+      - name: Verify the patch (built bundle)
+        run: node .recipe/tools/check-bundle.mjs
+
+      - name: Verify the IPA
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          found=(apps/readest-app/src-tauri/gen/apple/build/*/Readest.ipa)
+          # Expand the array only after proving it has one element: macOS ships
+          # bash 3.2, where `${arr[@]}` on an empty array trips `set -u` before
+          # the error message below could be printed.
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one IPA under gen/apple/build/*/Readest.ipa, found ${#found[@]}"
+            ls -lR apps/readest-app/src-tauri/gen/apple/build || true
+            exit 1
+          fi
+          ipa="${found[0]}"
+          case "$ipa" in
+            */build/arm64/Readest.ipa) ;;
+            *) echo "::error::unexpected IPA path: $ipa"; exit 1 ;;
+          esac
+
+          work=$(mktemp -d)
+          unzip -q "$ipa" -d "$work"
+          app="$work/Payload/Readest.app"
+          if [ ! -d "$app" ]; then
+            echo "::error::$ipa does not contain Payload/Readest.app"
+            exit 1
+          fi
+
+          exe=$(plutil -extract CFBundleExecutable raw "$app/Info.plist")
+          bundle_id=$(plutil -extract CFBundleIdentifier raw "$app/Info.plist")
+          short_version=$(plutil -extract CFBundleShortVersionString raw "$app/Info.plist")
+
+          if [ "$bundle_id" != "com.bilingify.readest" ]; then
+            echo "::error::$ipa declares $bundle_id, expected com.bilingify.readest"
+            exit 1
+          fi
+          if [ "$short_version" != "$VERSION" ]; then
+            echo "::error::$ipa carries CFBundleShortVersionString $short_version, expected $VERSION"
+            exit 1
+          fi
+
+          arches=$(lipo -archs "$app/$exe")
+          if [ "$arches" != "arm64" ]; then
+            echo "::error::$ipa is built for '$arches', expected arm64 only"
+            exit 1
+          fi
+
+          for appex in ReadestWidget ShareExtension; do
+            if [ ! -d "$app/PlugIns/$appex.appex" ]; then
+              echo "::error::$ipa is missing PlugIns/$appex.appex"
+              exit 1
+            fi
+          done
+
+          # It has to stay unsigned: there is no Apple certificate in this
+          # repository, and documenting "unsigned" while shipping a signature
+          # nobody can verify would be worse than an honestly unsigned package.
+          if [ -e "$app/_CodeSignature" ]; then
+            echo "::error::$ipa carries a code signature; it is not supposed to be signed"
+            exit 1
+          fi
+
+          {
+            echo "### $(basename "$ipa")"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| bundle id | \`$bundle_id\` |"
+            echo "| version | \`$short_version\` |"
+            echo "| executable | \`$exe\` ($arches) |"
+            echo "| signed | no |"
+            echo "| size | $(du -h "$ipa" | cut -f 1) |"
+            echo ""
+            echo '```'
+            unzip -l "$ipa" | head -n 15
+            echo '```'
+            echo ""
+            echo "xcodebuild: $(xcodebuild -version | tr '\n' ' ')"
+            echo ""
+            echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+            echo ""
+            echo '```'
+            df -h /
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the iOS artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          ipa="Readest-${VERSION}-ios-arm64.ipa"
+          cp apps/readest-app/src-tauri/gen/apple/build/arm64/Readest.ipa "$ipa"
+          ls -l "$ipa"
+          # No .sig next to it, on purpose: the Tauri updater does not support
+          # iOS, so this is not an update target and must not reach
+          # latest.json. A newer IPA is installed the same way this one is.
+          gh release upload "$TAG" "$ipa" --clobber
+
+  # ---------------------------------------------------------------------------
   # The app updates itself from these manifests, so they are assembled only once
   # every leg has uploaded its signatures. A manifest missing a platform key
   # means that platform is simply not offered an update, which the run summary
@@ -864,7 +1154,11 @@ jobs:
   # ---------------------------------------------------------------------------
   manifest:
     name: Publish updater manifests
-    needs: [detect, prepare, build, build_android]
+    # `build_ios` is in here even though the IPA carries no signature: this job
+    # is also where SHA256SUMS and the attestation are produced, and both are
+    # built from the release's asset list — waiting for iOS is what puts the IPA
+    # in them.
+    needs: [detect, prepare, build, build_android, build_ios]
     # `always()` is required: without a status function GitHub implicitly ANDs a
     # success() check over every needed job, so one failed platform would skip
     # the manifest outright and leave every other platform with no update path.
@@ -953,7 +1247,7 @@ jobs:
   # ---------------------------------------------------------------------------
   summary:
     name: Summary
-    needs: [detect, build, build_android, manifest, patch]
+    needs: [detect, build, build_android, build_ios, manifest, patch]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -973,6 +1267,7 @@ jobs:
           BUILD: ${{ needs.detect.outputs.build }}
           DESKTOP: ${{ needs.build.result }}
           ANDROID: ${{ needs.build_android.result }}
+          IOS: ${{ needs.build_ios.result }}
           MANIFEST: ${{ needs.manifest.result }}
           PATCH: ${{ needs.patch.result }}
         run: |
@@ -988,6 +1283,7 @@ jobs:
               echo "| --- | --- |"
               echo "| desktop matrix | $DESKTOP |"
               echo "| android | $ANDROID |"
+              echo "| ios | $IOS |"
               echo "| updater manifests | $MANIFEST |"
               echo "| patch export | $PATCH |"
             fi
@@ -1002,6 +1298,7 @@ jobs:
           needs.detect.outputs.build == 'true' &&
           (contains(fromJSON('["failure","cancelled"]'), needs.build.result) ||
            contains(fromJSON('["failure","cancelled"]'), needs.build_android.result) ||
+           contains(fromJSON('["failure","cancelled"]'), needs.build_ios.result) ||
            contains(fromJSON('["failure","cancelled"]'), needs.manifest.result) ||
            contains(fromJSON('["failure","cancelled"]'), needs.patch.result))
         env:
@@ -1011,6 +1308,7 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
           DESKTOP: ${{ needs.build.result }}
           ANDROID: ${{ needs.build_android.result }}
+          IOS: ${{ needs.build_ios.result }}
           MANIFEST: ${{ needs.manifest.result }}
           PATCH: ${{ needs.patch.result }}
         run: |
@@ -1021,6 +1319,7 @@ jobs:
           | --- | --- |
           | desktop matrix | ${DESKTOP} |
           | android | ${ANDROID} |
+          | ios | ${IOS} |
           | updater manifests | ${MANIFEST} |
           | patch export | ${PATCH} |
 

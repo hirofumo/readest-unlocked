@@ -45,6 +45,7 @@ Windows   x64 / arm64              installer + sig, portable zip
 macOS     x64 / arm64 / universal  dmg, updater tarball + sig
 Linux     x64 / arm64              AppImage + sig, deb, rpm
 Android   replace / coexist        arm64-v8a, armeabi-v7a, universal (each + sig)
+iOS       arm64                    unsigned ipa (sign it yourself)
 ```
 
 | Platform | Assets |
@@ -53,8 +54,9 @@ Android   replace / coexist        arm64-v8a, armeabi-v7a, universal (each + sig
 | macOS | `Readest-<V>-macos-<variant>.dmg`; `Readest-<V>-macos-<variant>-updater.tar.gz` and its `.sig` |
 | Linux | `Readest-<V>-linux-<arch>.AppImage` and its `.sig`; `Readest-<V>-linux-<arch>.deb`; `Readest-<V>-linux-<arch>.rpm` |
 | Android | `Readest-<V>-android-<family>-<abi>.apk` and its `.sig` |
+| iOS | `Readest-<V>-ios-arm64.ipa` |
 
-The Windows installer and the Linux AppImage are themselves the updater artifacts, which is why they carry signatures. The Windows portable zip does not update itself: the updater downloads whatever the manifest points at and launches it as an executable, so a zip cannot be that artifact. Every other platform still self-updates.
+The Windows installer and the Linux AppImage are themselves the updater artifacts, which is why they carry signatures. The Windows portable zip does not update itself: the updater downloads whatever the manifest points at and launches it as an executable, so a zip cannot be that artifact. The iOS IPA is the second exception, for a different reason: the Tauri updater has no iOS support, so there is nothing to sign and nothing to point a manifest at. Every other platform still self-updates.
 
 ### The two Android families
 
@@ -70,6 +72,14 @@ The About dialog states which of the two is installed.
 Both families are signed with the same self-generated Android key. That key is not upstream's, so the official app cannot be updated in place by either family, and neither family can be updated in place over the official app. Android rejects an install whose signature differs from the installed one, so an official install has to be removed first — which clears app-local data, unless it is restored from a backup — or the coexisting family is used instead.
 
 On the desktop the position is different: those builds also keep upstream's identifier, so they read the same application data directory the official app used, and the library, settings and reading progress carry over without a re-import. That follows from the identifier being unchanged rather than from a separate test.
+
+### The iOS build is unsigned
+
+This repository has no Apple certificate, so the iOS asset is an honestly **unsigned** IPA: on its own it installs nothing. It is the app, archived for arm64 devices and packaged as `Payload/Readest.app`, and signing it is your side of the job — AltStore, SideStore, Sideloadly or Xcode, with your own Apple ID and provisioning profile.
+
+What the resulting install can do depends on the account you sign with. App Groups are not available to free personal teams, and the reading widget and the share extension both rely on one, so expect those two to be degraded or missing unless you sign with a paid team. The package keeps upstream's bundle id `com.bilingify.readest`, so installing over an App Store copy of Readest requires removing that copy first.
+
+**None of this has been verified on a device from CI.** What the pipeline proves is that the package is structurally correct — see [Verification](#verification) — not that it installs or runs. Treat the first device install as your own test.
 
 ## How the pipeline works
 
@@ -88,6 +98,7 @@ Jobs:
 | prepare | Creates the release, so the build legs only have to upload assets. |
 | build | A matrix over Windows (`x64`, `arm64`), macOS (`x64`, `arm64`, `universal`) and Linux (`x64`, `arm64`). |
 | build_android | A separate job, because a job-level `if` cannot read the matrix context and Android has to be skipped outright when the signing secrets are not configured. |
+| build_ios | A separate job on a macOS runner: generates the Xcode project the upstream checkout does not carry, builds an unsigned arm64 IPA, and asserts the package's contents. No secret is involved — there is no Apple certificate. |
 | manifest | Publishes `latest.json` and `latest-coexist.json`, assembled from the `.sig` files every leg uploaded, plus upstream's `release-notes.json` for the in-app "recent updates" view. |
 | summary | Reports the result of every leg. |
 
@@ -99,14 +110,14 @@ Patching is anchor-based and deliberately fails the build when an anchor moves. 
 
 The app updates itself from this repository's releases, not from readest.com.
 
-Each release publishes a signed updater manifest — `latest.json` for the replacing Android family and the desktop builds, `latest-coexist.json` for the coexisting Android family — together with the `.sig` files the Tauri updater verifies against a public key compiled into the app. The Windows portable zip is the exception described above and does not update itself. The private signing key is held only in this repository's secrets and never ships in a build. Keep that private key and its password: because the matching public key is compiled into the app, losing them means no future release can be signed and already-installed apps will stop accepting updates.
+Each release publishes a signed updater manifest — `latest.json` for the replacing Android family and the desktop builds, `latest-coexist.json` for the coexisting Android family — together with the `.sig` files the Tauri updater verifies against a public key compiled into the app. The Windows portable zip and the iOS IPA are the exceptions described above and do not update themselves. The private signing key is held only in this repository's secrets and never ships in a build. Keep that private key and its password: because the matching public key is compiled into the app, losing them means no future release can be signed and already-installed apps will stop accepting updates.
 
 ## Verification
 
 Three independent layers, none of them a stronger claim than what it actually checks:
 
 1. **Source assertions.** `tools/verify.mjs` runs after the patch and before the expensive native build, so a broken patch fails in seconds rather than after a long build.
-2. **The built artifact.** `tools/check-bundle.mjs` runs after the frontend build and asserts the `__READEST_UNLOCKED__` build marker against the JavaScript the app actually ships. This is the difference between "we edited the right file" and "the shipped bundle is unlocked".
+2. **The built artifact.** `tools/check-bundle.mjs` runs after the frontend build and asserts the `__READEST_UNLOCKED__` build marker against the JavaScript the app actually ships. This is the difference between "we edited the right file" and "the shipped bundle is unlocked". Packages are then read rather than trusted: each Android APK has its `applicationId`, its ABIs and its signing certificate checked by unpacking it, and the iOS IPA has its bundle id, version, architecture, embedded app extensions and unsigned state checked the same way.
 3. **CI failure.** If either assertion fails, the job fails and produces no artifacts, so a partially patched release is never published.
 
 The patched module also sets `globalThis.__READEST_UNLOCKED__ = true` at runtime, which is what makes layer 2 possible and what an installed build can be checked against.
@@ -146,6 +157,7 @@ The artifacts are not signed by a code-signing certificate.
 - **Windows**: SmartScreen warns on first run. The installer updates itself; the portable zip does not.
 - **macOS**: Gatekeeper blocks the first launch. Run `xattr -cr /Applications/Readest.app`, then open the app again.
 - **Android**: see [the two families](#the-two-android-families) above before choosing an APK.
+- **iOS**: the IPA is unsigned, so it has to be signed with your own Apple ID before it installs — see [the iOS build](#the-ios-build-is-unsigned) above, including what a free Apple ID cannot do.
 - **Android, updating automatically**: the asset names are stable, so
   [Obtainium](https://github.com/ImranR98/Obtainium) can follow this repository
   directly — add `https://github.com/hirofumo/readest-unlocked` as a GitHub
@@ -165,8 +177,8 @@ its README documents the environment variables.
 Worth knowing before you pick a build: `SELF_HOSTED=true` is **upstream's own**
 switch for this case, and their published image sets it by default — upstream
 unlocks the premium client features for a self-hosted deployment, signed in or
-not. This project applies the same rule to the desktop and Android builds, which
-upstream does not publish; it does not invent a different one.
+not. This project applies the same rule to the desktop, Android and iOS builds,
+which upstream does not publish; it does not invent a different one.
 
 What the patch wires up is listed in [TECHNICAL.md](TECHNICAL.md) §9 — the API
 origin, the Node API origin, the account backend and the links the app builds for

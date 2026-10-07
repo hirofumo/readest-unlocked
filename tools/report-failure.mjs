@@ -2,10 +2,10 @@
 /**
  * Opens — or appends to — a single issue describing a failed run.
  *
- * A build has fifteen jobs and thirteen of them are build legs, so a bad
- * upstream day would otherwise open thirteen identical issues. This script
- * keeps it to one: it looks for an open issue with exactly this title and
- * comments on it instead of creating another.
+ * A build fans out across every platform at once, so a bad upstream day would
+ * otherwise open one identical issue per failing leg. This script keeps it to
+ * one: it looks for an open issue with exactly this title and comments on it
+ * instead of creating another.
  *
  * The lookup is a plain issue listing, deliberately not `--search`: GitHub's
  * search index lags seconds-to-minutes behind the live list, and a second
