@@ -77,6 +77,14 @@ jobs:
       - name: Verify the patched sources
         run: node .recipe/tools/verify.mjs
 
+      # Nothing to do with upstream, and deliberately in the cheap daily job: the
+      # build workflow's release writes must stay gated on `publish`, which is
+      # what keeps a push to the `dev` branch from publishing. A platform leg
+      # added later without that guard would otherwise publish from a branch
+      # nobody builds for users.
+      - name: Check the build workflow's publish gate
+        run: cd .recipe && node tools/check-workflow.mjs
+
       - name: Record what was checked
         if: always()
         run: |

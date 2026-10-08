@@ -4,8 +4,18 @@ name: Build unlocked Readest
 # release, together with the signed updater manifests the app updates itself
 # from. The upstream source is never committed here: each run checks the tag out,
 # applies tools/unlock.mjs, and builds. See README.md.
+#
+# `main` publishes. Any other ref — the `dev` branch a push comes from, or a
+# manual dispatch from it — runs the same matrix as a dry run: every leg builds
+# and asserts, and nothing writes to the release. The switch is the `publish`
+# output of `detect`, and tools/check-workflow.mjs asserts that every release
+# write in this file is guarded by it.
 
 on:
+  push:
+    # Development pushes run the whole matrix so a recipe change is proven to
+    # build before it reaches main. They never publish (see `publish` in detect).
+    branches: [dev]
   schedule:
     # Daily at 03:00 UTC. Rebuilds only when upstream has a version we have not
     # published yet, so idle days cost one cheap `detect` job.
@@ -24,10 +34,13 @@ on:
 permissions:
   contents: read
 
-# Never let two builds publish to the same release concurrently.
+# One publishing group for main, so a scheduled run and a manual one never write
+# the same release at once. A dev push gets its own group and cancels its older
+# run: it writes nothing, and the only thing a queue of superseded dry runs costs
+# is runners.
 concurrency:
-  group: build-unlocked
-  cancel-in-progress: false
+  group: build-unlocked-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   UPSTREAM_REPO: readest/readest
@@ -58,6 +71,9 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
       android: ${{ steps.android.outputs.android }}
+      # Only `main` may touch the release. Everything that writes to it is gated
+      # on this, and tools/check-workflow.mjs asserts that it stays that way.
+      publish: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,7 +91,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_REF: ${{ inputs.ref }}
-          INPUT_FORCE: ${{ inputs.force }}
+          # A dry run always rebuilds: the version it would build is already
+          # published, and a run that skipped every leg would verify nothing.
+          INPUT_FORCE: ${{ inputs.force == true || github.ref != 'refs/heads/main' }}
         run: node tools/resolve-upstream.mjs
 
       - name: Check for Android signing secrets
@@ -95,6 +113,7 @@ jobs:
             echo "| release tag | ${{ steps.resolve.outputs.tag }} |"
             echo "| build needed | ${{ steps.resolve.outputs.build }} |"
             echo "| android enabled | ${{ steps.android.outputs.android == 'true' }} |"
+            echo "| publishes | ${{ github.ref == 'refs/heads/main' }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -109,6 +128,9 @@ jobs:
       contents: write
     steps:
       - name: Create the release when it does not exist yet
+        # A dry run leaves the release alone — and this job still has to *run*:
+        # every leg needs it, so skipping the job would skip the whole matrix.
+        if: needs.detect.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -239,7 +261,14 @@ jobs:
           TAG: ${{ needs.detect.outputs.tag }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" unlock.patch BUILD.md --clobber
+          if [ "${{ needs.detect.outputs.publish }}" != "true" ]; then
+            # Still worth reading on a dry run: this is the diff a release would
+            # ship, and the same line appears in a publishing run's log.
+            echo "dry run: leaving $TAG untouched. The patch covers:"
+            git diff --stat
+          else
+            gh release upload "$TAG" unlock.patch BUILD.md --clobber
+          fi
 
   # ---------------------------------------------------------------------------
   # Desktop: one matrix leg per platform and architecture. Each leg checks
@@ -366,6 +395,10 @@ jobs:
           # compiling cold on every release. Cost and the 10 GB budget: see
           # TECHNICAL.md §6.
           key: ${{ format('{0}-cargo', matrix.config.name) }}
+          # Read-only on a dry run: dev can restore main's entries, and the guard
+          # keeps it from writing a second copy of the ~8 GB of Rust caches. The
+          # repository budget is already past 10 GB (TECHNICAL.md §6).
+          save-if: ${{ needs.detect.outputs.publish == 'true' }}
 
       # The npm cli-cef bundles the AppImage with a broken quick-sharun fork.
       # Build the CLI from readest/tauri instead; rev-pinned, and the marker
@@ -495,6 +528,15 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
+          # A dry run does everything this step does except the upload itself, so
+          # its renames and assertions still run.
+          upload() {
+            if [ "${{ needs.detect.outputs.publish }}" = "true" ]; then
+              gh release upload "$TAG" "$@" --clobber
+            else
+              echo "dry run: not uploading $*"
+            fi
+          }
           setup="Readest-${VERSION}-windows-${{ matrix.config.arch }}-setup.exe"
           portable="Readest-${VERSION}-windows-${{ matrix.config.arch }}-portable.zip"
 
@@ -509,7 +551,7 @@ jobs:
           powershell -NoProfile -Command "Compress-Archive -Path 'readest-portable.exe' -DestinationPath '$portable' -Force"
           rm -f readest-portable.exe
 
-          gh release upload "$TAG" "$setup" "$setup.sig" "$portable" --clobber
+          upload "$setup" "$setup.sig" "$portable"
 
       - name: Upload the macOS artifacts (macOS)
         if: matrix.config.release == 'macos'
@@ -520,10 +562,19 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
+          # See the Windows step: the guard covers only the upload, so the
+          # tarball assertion below still runs on a dry run.
+          upload() {
+            if [ "${{ needs.detect.outputs.publish }}" = "true" ]; then
+              gh release upload "$TAG" "$@" --clobber
+            else
+              echo "dry run: not uploading $*"
+            fi
+          }
           bundle="target/${{ matrix.config.target }}/release/bundle"
           dmg="Readest-${VERSION}-macos-${{ matrix.config.arch }}.dmg"
           cp "$(ls "$bundle"/dmg/*.dmg | head -n 1)" "$dmg"
-          gh release upload "$TAG" "$dmg" --clobber
+          upload "$dmg"
 
           # The macOS updater artifact is the .app tarball, not the dmg.
           tarball=$(ls "$bundle"/macos/*.app.tar.gz 2>/dev/null | head -n 1 || true)
@@ -534,7 +585,7 @@ jobs:
           updater="Readest-${VERSION}-macos-${{ matrix.config.arch }}-updater.tar.gz"
           cp "$tarball" "$updater"
           cp "$tarball.sig" "$updater.sig"
-          gh release upload "$TAG" "$updater" "$updater.sig" --clobber
+          upload "$updater" "$updater.sig"
 
       - name: Upload the Linux artifacts (Linux)
         if: matrix.config.release == 'linux'
@@ -545,6 +596,15 @@ jobs:
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
+          # See the Windows step: the guard covers only the upload, so the
+          # signature assertion below still runs on a dry run.
+          upload() {
+            if [ "${{ needs.detect.outputs.publish }}" = "true" ]; then
+              gh release upload "$TAG" "$@" --clobber
+            else
+              echo "dry run: not uploading $*"
+            fi
+          }
           bundle=target/release/bundle
           arch="${{ matrix.config.arch }}"
           echo "bundle contents:"
@@ -568,11 +628,10 @@ jobs:
           cp "$(ls "$bundle"/deb/*.deb | head -n 1)" "Readest-${VERSION}-linux-${arch}.deb"
           cp "$(ls "$bundle"/rpm/*.rpm | head -n 1)" "Readest-${VERSION}-linux-${arch}.rpm"
 
-          gh release upload "$TAG" \
+          upload \
             "$appimage" "$appimage.sig" \
             "Readest-${VERSION}-linux-${arch}.deb" \
-            "Readest-${VERSION}-linux-${arch}.rpm" \
-            --clobber
+            "Readest-${VERSION}-linux-${arch}.rpm"
 
   # ---------------------------------------------------------------------------
   # Android: skipped outright until the signing secrets exist. Builds two
@@ -664,7 +723,8 @@ jobs:
           key: android-cargo
           # Both families build the same triples from the same sources, so one
           # writer is enough and the other save would be rejected as a duplicate.
-          save-if: ${{ matrix.family == 'replace' }}
+          # A dry run writes nothing at all.
+          save-if: ${{ matrix.family == 'replace' && needs.detect.outputs.publish == 'true' }}
 
       # `tauri android init` regenerates the Gradle project every run, so the
       # wrapper distribution and the dependency cache are what make later runs
@@ -831,6 +891,15 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          # See the Windows step: a dry run still signs and still asserts the
+          # package, it just does not publish it.
+          upload() {
+            if [ "${{ needs.detect.outputs.publish }}" = "true" ]; then
+              gh release upload "$TAG" "$@" --clobber
+            else
+              echo "dry run: not uploading $*"
+            fi
+          }
           family="${{ matrix.family }}"
           variant="${{ matrix.variant }}"
           apk="Readest-${VERSION}-android-${family}-${variant}.apk"
@@ -852,7 +921,7 @@ jobs:
           # Tauri does not sign the APKs itself; upstream signs them explicitly
           # and so does this workflow, because the updater verifies them.
           (cd apps/readest-app && pnpm tauri signer sign "../../$apk")
-          gh release upload "$TAG" "$apk" "$apk.sig" --clobber
+          upload "$apk" "$apk.sig"
 
   # ---------------------------------------------------------------------------
   # iOS: one unsigned, arm64-only IPA. No Apple certificate is configured for
@@ -919,12 +988,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          # No other leg builds the iOS triple, so this entry has exactly one
-          # writer without a `save-if` guard. It costs roughly another 1.4 GB
-          # against a repository cache budget that is already slightly past
-          # 10 GB — the alternative is a cold iOS Rust compile on every release
-          # (see TECHNICAL.md §6, "cache budget").
+          # No other leg builds the iOS triple, so a publishing run is the only
+          # writer of this entry. It costs roughly another 1.4 GB against a
+          # repository cache budget that is already slightly past 10 GB — the
+          # alternative is a cold iOS Rust compile on every release (see
+          # TECHNICAL.md §6, "cache budget"). A dry run reads it and writes
+          # nothing.
           key: ios-cargo
+          save-if: ${{ needs.detect.outputs.publish == 'true' }}
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
@@ -1142,7 +1213,11 @@ jobs:
           # No .sig next to it, on purpose: the Tauri updater does not support
           # iOS, so this is not an update target and must not reach
           # latest.json. A newer IPA is installed the same way this one is.
-          gh release upload "$TAG" "$ipa" --clobber
+          if [ "${{ needs.detect.outputs.publish }}" = "true" ]; then
+            gh release upload "$TAG" "$ipa" --clobber
+          else
+            echo "dry run: not uploading $ipa"
+          fi
 
   # ---------------------------------------------------------------------------
   # The app updates itself from these manifests, so they are assembled only once
@@ -1163,7 +1238,10 @@ jobs:
     # Gating on `prepare` is deliberate — once the release exists, the manifest
     # is assembled from whatever signatures landed, and a platform whose
     # signature is missing is reported rather than taking the rest down with it.
-    if: always() && needs.prepare.result == 'success'
+    # Gating on `publish` skips this job outright on a dry run: everything it
+    # does is release work — the asset-set assertion, the manifests, the
+    # checksums, the attestation and the tag move.
+    if: always() && needs.prepare.result == 'success' && needs.detect.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1316,6 +1394,7 @@ jobs:
         env:
           TAG: ${{ needs.detect.outputs.tag }}
           BUILD: ${{ needs.detect.outputs.build }}
+          PUBLISH: ${{ needs.detect.outputs.publish }}
           DESKTOP: ${{ needs.build.result }}
           ANDROID: ${{ needs.build_android.result }}
           IOS: ${{ needs.build_ios.result }}
@@ -1327,6 +1406,16 @@ jobs:
             echo ""
             if [ "$BUILD" != "true" ]; then
               echo "Upstream has not published a new version since the last release; nothing was built."
+            elif [ "$PUBLISH" != "true" ]; then
+              echo "Dry run: every leg built and asserted, nothing was published, and \`$TAG\` is untouched."
+              echo ""
+              echo "| leg | result |"
+              echo "| --- | --- |"
+              echo "| desktop matrix | $DESKTOP |"
+              echo "| android | $ANDROID |"
+              echo "| ios | $IOS |"
+              echo "| updater manifests | $MANIFEST (skipped: dry run) |"
+              echo "| patch export | $PATCH |"
             else
               echo "Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
               echo ""
@@ -1344,9 +1433,14 @@ jobs:
       # somewhere a person actually looks. `skipped` is not a failure here — the
       # Android job is skipped whenever the signing secrets are absent, which is
       # a supported configuration rather than a problem.
+      #
+      # A dry run stays out of this channel on purpose: the issue title names a
+      # release, and a dev failure is not a release failure. The pusher gets the
+      # red cross and the notification, which is who needs it.
       - name: Open or update the failure issue
         if: >-
           needs.detect.outputs.build == 'true' &&
+          needs.detect.outputs.publish == 'true' &&
           (contains(fromJSON('["failure","cancelled"]'), needs.build.result) ||
            contains(fromJSON('["failure","cancelled"]'), needs.build_android.result) ||
            contains(fromJSON('["failure","cancelled"]'), needs.build_ios.result) ||
