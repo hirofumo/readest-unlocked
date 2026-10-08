@@ -15,7 +15,12 @@ on:
   push:
     # Development pushes run the whole matrix so a recipe change is proven to
     # build before it reaches main. They never publish (see `publish` in detect).
-    branches: [dev]
+    #
+    # `topic/**` is the scratch-branch convention: a change is forked from `dev`,
+    # verified by its own dry run, merged back, and the branch deleted. The prefix
+    # cannot be `dev/<topic>` — git cannot hold `refs/heads/dev` and
+    # `refs/heads/dev/...` at the same time.
+    branches: [dev, 'topic/**']
   schedule:
     # Daily at 03:00 UTC. Rebuilds only when upstream has a version we have not
     # published yet, so idle days cost one cheap `detect` job.
