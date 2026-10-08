@@ -30,9 +30,9 @@ One caveat on the last one. Its gate runs through the same client-side check thi
 
 ## Custom server URL
 
-The Misc settings panel has a **Server URL** entry and an optional Supabase anon key. With both empty — the default — the app talks to the official Readest servers.
+Settings has a **Self-hosted** entry — **Custom → Self-hosted**, a second-level page — that mirrors the WebDAV panel. Until a server is configured it is that panel's connect form: the server URL, an optional Supabase anon key, and a filled **Connect** button. Once one is configured the page shows what the app is pointed at, with **Disconnect**.
 
-Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. **Reset** clears both and returns to the official servers. Changing either reloads the app, because the API base and the Supabase client are resolved once at startup.
+**Connect** probes the address first — a `GET` of it through the app's own fetch helper, so the answer is the answer the app itself would get — and only an unreachable host or a 5xx refuses it. Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. **Disconnect** keeps both — the address stays in the form, so reconnecting is one click — and returns to the official servers. Connecting and disconnecting both reload the app, because the API base and the Supabase client are resolved once at startup; either way a toast appears first, then the app restarts.
 
 Not covered: the CDN hosts for webfonts and published covers, and the readest.com landing pages the web build links to. The desktop app reaches the former only for optional assets and copes without them.
 
@@ -157,7 +157,7 @@ The artifacts are not signed by a code-signing certificate.
 
 ## Self-hosting
 
-The **Server URL** entry in Settings points the client at your own Readest
+The **Self-hosted** entry in Settings (**Custom → Self-hosted**) points the client at your own Readest
 instance. The server side is upstream's: [readest/docker](https://github.com/readest/readest/tree/main/docker)
 ships a `compose.yaml` that brings up the app, the API and a Supabase stack, and
 its README documents the environment variables.
@@ -168,7 +168,7 @@ unlocks the premium client features for a self-hosted deployment, signed in or
 not. This project applies the same rule to the desktop, Android and iOS builds,
 which upstream does not publish; it does not invent a different one.
 
-Pointing the client at your instance is the **Server URL** entry described under
+Pointing the client at your instance is the **Self-hosted** entry described under
 [Custom server URL](#custom-server-url) above.
 
 ### Using it without an account at all

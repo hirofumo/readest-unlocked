@@ -22,6 +22,12 @@ const SENTINEL_CONSTANTS = `// ${MARKER} Update endpoints and signing key are th
 
 const REPO = process.env['READEST_UNLOCKED_REPO'] ?? 'hirofumo/readest-unlocked';
 const REPO_URL = `https://github.com/${REPO}`;
+/**
+ * The name the About dialog shows for this project. Derived the same way
+ * unlock.mjs derives it — the repository's own name, not the `owner/name` slug —
+ * so the assertion moves with READEST_UNLOCKED_REPO instead of pinning a label.
+ */
+const REPO_NAME = REPO.split('/').pop() ?? REPO;
 const RELEASES_URL = `${REPO_URL}/releases/latest`;
 const RELEASE_DOWNLOAD_BASE = `${REPO_URL}/releases/latest/download`;
 const UPDATER_MANIFEST_URL = `${RELEASE_DOWNLOAD_BASE}/latest.json`;
@@ -52,6 +58,7 @@ const parseRoot = () => {
 
 const read = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : null);
 const lf = (text) => text.replace(/\r\n/g, '\n');
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const root = parseRoot();
 console.log(`[verify] checking ${root}\n`);
@@ -209,6 +216,28 @@ if (about === null) {
   } else {
     fail(`AboutWindow does not link to ${REPO_URL}`);
   }
+
+  // Both links name the project rather than the `owner/name` slug it lives
+  // under. The old labels are asserted absent as well: a link that keeps its old
+  // text is exactly what this build was changed to stop shipping.
+  const labels = [
+    { name: 'readest', href: 'https://github\\.com/readest/readest', text: 'readest' },
+    { name: REPO_NAME, href: escapeRegExp(REPO_URL), text: escapeRegExp(REPO_NAME) },
+  ];
+  for (const { name, href, text } of labels) {
+    const pattern = new RegExp(`<Link[^>]*href='${href}'[^>]*>\\s*${text}\\s*</Link>`);
+    if (pattern.test(normalized)) ok(`AboutWindow shows the repository as "${name}"`);
+    else fail(`AboutWindow does not show the repository as "${name}"`);
+  }
+  const staleLabels = [
+    /<Link[^>]*>\s*github\.com\/readest\/readest\s*<\/Link>/,
+    new RegExp(`<Link[^>]*>\\s*${escapeRegExp(REPO)}\\s*</Link>`),
+  ];
+  if (staleLabels.some((pattern) => pattern.test(normalized))) {
+    fail('AboutWindow still shows an owner/name slug as link text');
+  } else {
+    ok('AboutWindow shows no owner/name slug as link text');
+  }
 }
 
 /* 5. self-hosted server ----------------------------------------------------- */
@@ -227,6 +256,15 @@ if (runtimeConfig === null) {
     [
       'an optional Supabase anon key is honoured',
       normalized.includes('CUSTOM_SERVER_ANON_KEY') && normalized.includes('supabaseAnonKey: anonKey'),
+    ],
+    [
+      'a disconnected server is ignored even though its address is kept',
+      normalized.includes("CUSTOM_SERVER_ENABLED_KEY = 'readest.serverEnabled';") &&
+        normalized.includes('!isCustomServerEnabled()'),
+    ],
+    [
+      'an address stored before the switch existed still counts as enabled',
+      normalized.includes("readStoredSetting(CUSTOM_SERVER_ENABLED_KEY) !== 'false'"),
     ],
   ];
   for (const [label, passed] of checks) {
@@ -261,35 +299,220 @@ if (miscPanel === null) {
   fail(`missing ${miscPanelFile}`);
 } else {
   const normalized = lf(miscPanel);
-  if (normalized.includes('settings.custom.serverUrl') && normalized.includes('draftAnonKey')) {
-    ok('the Misc panel offers the Server URL and anon key entry');
-  } else {
-    fail('MiscPanel.tsx has no Server URL entry');
+
+  // The entry is a second-level page that mirrors the WebDAV panel: a row in the
+  // Custom list pushes into a sub-page, which is a connect form until a server is
+  // configured and the connected view with a Disconnect button afterwards.
+  const entryChecks = [
+    [
+      'the Custom list carries a Self-hosted row',
+      normalized.includes("data-setting-id='settings.custom.selfHosted'") &&
+        normalized.includes('<NavigationRow'),
+    ],
+    ['the row title is translated', normalized.includes("title={_('Self-hosted')}")],
+    [
+      'the row reports whether a server is configured',
+      normalized.includes("_('Connected')") && normalized.includes("_('Not connected')"),
+    ],
+    [
+      'the sub-page is a breadcrumb off the Custom panel',
+      normalized.includes('<SubPageHeader') &&
+        normalized.includes("parentLabel={_('Custom')}") &&
+        normalized.includes("currentLabel={_('Self-hosted')}"),
+    ],
+    [
+      'the sub-page keeps the URL and anon-key fields',
+      normalized.includes("htmlFor='selfHostedServerUrl'") && normalized.includes('draftAnonKey'),
+    ],
+    [
+      'Android Back steps out of the sub-page',
+      normalized.includes('useKeyDownActions') && normalized.includes('showSelfHosted'),
+    ],
+    [
+      'the page switches between a connect form and a connected view',
+      normalized.includes('isServerConfigured ? (') &&
+        normalized.includes('const handleConnect = async () => {') &&
+        normalized.includes('const handleDisconnect = () => {'),
+    ],
+    [
+      'the connected state is the stored switch, not merely a stored address',
+      normalized.includes('() => isCustomServerEnabled() && !!draftServerUrl'),
+    ],
+    [
+      'the connected view names the server it talks to',
+      normalized.includes("_('Connected to {{url}}', { url: draftServerUrl })"),
+    ],
+  ];
+  for (const [label, passed] of entryChecks) {
+    if (passed) ok(label);
+    else fail(`MiscPanel.tsx: ${label}`);
   }
-  // Both controls and the hint have to go through _(), or the panel ignores the
-  // app's language entirely.
-  const untranslated = ["title={_('Server URL')}", "placeholder={_('Supabase anon key (optional)')}", "{_('Reset')}", "{_('Apply')}"].filter(
-    (needle) => !normalized.includes(needle),
+
+  // Connect is the WebDAV panel's button: filled, disabled until the URL is
+  // there, spinning while the probe runs. Reset and the flat Apply are gone.
+  if (normalized.includes("'btn btn-contrast'") && normalized.includes("_('Connect')")) {
+    ok('Connect is the filled primary button');
+  } else {
+    fail('Connect is not the filled button this build ships');
+  }
+  if (normalized.includes('disabled={isConnecting || !draftServerUrl}')) {
+    ok('Connect stays disabled until a URL is entered');
+  } else {
+    fail('Connect is not gated on a non-empty URL');
+  }
+  if (normalized.includes('loading loading-spinner loading-sm')) {
+    ok('Connect shows the shared spinner while probing');
+  } else {
+    fail('Connect has no connecting state');
+  }
+  // The sub-page is where Connect/Disconnect live; the panel's CSS editors keep
+  // their own Apply button, so the search is scoped to this block.
+  const subPage = normalized.slice(
+    normalized.indexOf('if (showSelfHosted) {'),
+    normalized.indexOf('  return (\n    <div'),
   );
-  if (untranslated.length === 0) ok('every Server string goes through the translation helper');
-  else fail(`these Server strings are not translated: ${untranslated.join(', ')}`);
+  if (subPage.includes("{_('Disconnect')}") && !subPage.includes("{_('Reset')}")) {
+    ok('Reset is gone and Disconnect replaces it');
+  } else {
+    fail('MiscPanel.tsx must offer Disconnect instead of Reset');
+  }
+  if (!subPage.includes("_('Apply')")) {
+    ok('the flat Apply button is gone from the self-hosted page');
+  } else {
+    fail('the self-hosted page still offers Apply');
+  }
+
+  // Connecting probes the origin before persisting, and reports both outcomes the
+  // way the WebDAV panel does.
+  const connect = normalized.slice(
+    normalized.indexOf('const handleConnect = async () => {'),
+    normalized.indexOf('const handleDisconnect'),
+  );
+  const probeChecks = [
+    ['Connect probes the server first', normalized.includes('checkServerReachable(url)')],
+    ['the probe uses the app’s own fetch helper', normalized.includes('fetchWithTimeout(')],
+    [
+      'a failed connect says why',
+      connect.includes('_(\'Failed to connect\')') && connect.includes("type: 'error'"),
+    ],
+    [
+      'the probe reports network failures and bad responses',
+      normalized.includes("_('Network error')") &&
+        normalized.includes("_('Unexpected server response (status {{status}})'"),
+    ],
+    [
+      'the probe rejects anything that is not an http(s) URL',
+      normalized.includes("_('Please enter a valid http(s) URL')") &&
+        normalized.includes('target.protocol !=='),
+    ],
+    ['a successful connect is announced', connect.includes("_('Connected')")],
+  ];
+  for (const [label, passed] of probeChecks) {
+    if (passed) ok(label);
+    else fail(`MiscPanel.tsx: ${label}`);
+  }
+
+  // Disconnect keeps the WebDAV button's treatment and its credentials-survive
+  // behaviour: only the switch goes off, the address stays, and the reload that
+  // falls back to the official servers waits for the toast to paint.
+  const disconnect = normalized.slice(normalized.indexOf('const handleDisconnect = () => {'));
+  if (normalized.includes("'text-error hover:bg-error/10'")) {
+    ok('Disconnect uses the WebDAV panel’s destructive treatment');
+  } else {
+    fail('Disconnect does not use the expected treatment');
+  }
+  if (
+    disconnect.includes('storeServerSettings(draftServerUrl, draftAnonKey, false)') &&
+    disconnect.includes('setIsServerConfigured(false)') &&
+    disconnect.includes("_('Disconnected')")
+  ) {
+    ok('Disconnect keeps the address, flips the switch, then toasts');
+  } else {
+    fail('Disconnect does not keep the address / flip the switch / toast as expected');
+  }
+  if (
+    normalized.includes('restartWithNotice') &&
+    normalized.includes("eventDispatcher.dispatch('toast'") &&
+    normalized.includes('window.location.reload()')
+  ) {
+    ok('Connect and Disconnect announce themselves before the reload');
+  } else {
+    fail('the reload does not announce itself first');
+  }
+  if (
+    normalized.includes("'readest.serverUrl'") &&
+    normalized.includes("'readest.supabaseAnonKey'") &&
+    normalized.includes("'readest.serverEnabled'")
+  ) {
+    ok('the panel writes the storage keys the runtime config reads');
+  } else {
+    fail('the panel and runtimeConfig.ts disagree about the storage keys');
+  }
+
+  // The explanation is the canonical Tips callout now, not a bare paragraph.
+  if (normalized.includes('<Tips>') && !normalized.includes('text-base-content/60 px-4 text-xs')) {
+    ok('the explanation is a Tips callout');
+  } else {
+    fail('the self-hosted explanation is not the expected Tips callout');
+  }
+
+  // Every user-visible string has to go through _(), or the page ignores the
+  // app's language entirely.
+  const untranslated = [
+    "title={_('Self-hosted')}",
+    "currentLabel={_('Self-hosted')}",
+    "description={_('Connect the app to your own Readest server')}",
+    "'Connected to {{url}}'",
+    "'Please enter a valid http(s) URL'",
+    "_('Server URL')",
+    "_('Supabase anon key (optional)')",
+    "_('Connect')",
+    "{_('Disconnect')}",
+    "_('Failed to connect')",
+    "_('Network error')",
+  ].filter((needle) => !normalized.includes(needle));
+  if (untranslated.length === 0) ok('every self-hosted string goes through the translation helper');
+  else fail(`these self-hosted strings are not translated: ${untranslated.join(', ')}`);
 }
 
-// Both locales unlock.mjs writes. A locale that quietly fell back to the
-// English key-as-content would otherwise pass unnoticed.
+// Both locales unlock.mjs writes, string by string. A locale that quietly fell
+// back to the English key-as-content would otherwise pass unnoticed.
 const TRANSLATED_LOCALES = {
-  'zh-CN': '把应用指向自建的 Readest',
-  'zh-TW': '把應用指向自架的 Readest',
+  'zh-CN': [
+    ['Self-hosted', '自托管'],
+    ['Connect the app to your own Readest server', '把应用连接到自建的 Readest 服务器'],
+    ['Connected to {{url}}', '已连接到 {{url}}'],
+    ['Supabase anon key (optional)', 'Supabase 匿名密钥（可选）'],
+    [
+      'Point the app at your own Readest server. Disconnecting returns to the official servers.',
+      '把应用指向你自己的 Readest 服务器。断开连接即可回到官方服务器。',
+    ],
+  ],
+  'zh-TW': [
+    ['Self-hosted', '自架'],
+    ['Connect the app to your own Readest server', '把應用連接到自架的 Readest 伺服器'],
+    ['Connected to {{url}}', '已連線到 {{url}}'],
+    ['Supabase anon key (optional)', 'Supabase 匿名金鑰（選填）'],
+    [
+      'Point the app at your own Readest server. Disconnecting returns to the official servers.',
+      '把應用指向你自己的 Readest 伺服器。斷開連接即可回到官方伺服器。',
+    ],
+  ],
 };
-for (const [locale, sentence] of Object.entries(TRANSLATED_LOCALES)) {
+for (const [locale, strings] of Object.entries(TRANSLATED_LOCALES)) {
   const file = path.join(root, 'apps', 'readest-app', 'public', 'locales', locale, 'translation.json');
   const content = read(file);
   if (content === null) {
     fail(`missing ${file}`);
-  } else if (content.includes(sentence)) {
-    ok(`the new Server strings are translated for ${locale}`);
+    continue;
+  }
+  const missing = strings
+    .filter(([key, value]) => !content.includes(`${JSON.stringify(key)}: ${JSON.stringify(value)}`))
+    .map(([key]) => key);
+  if (missing.length === 0) {
+    ok(`the self-hosted strings are translated for ${locale}`);
   } else {
-    fail(`${locale} has no translation for the new Server strings`);
+    fail(`${locale} has no translation for: ${missing.join(' | ')}`);
   }
 }
 

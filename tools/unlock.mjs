@@ -28,6 +28,11 @@ const MARKER = '[readest-unlocked]';
  */
 const REPO = process.env['READEST_UNLOCKED_REPO'] ?? 'hirofumo/readest-unlocked';
 const REPO_URL = `https://github.com/${REPO}`;
+/**
+ * What the About dialog calls this project: the repository's own name, not the
+ * `owner/name` slug, so the label still matches if READEST_UNLOCKED_REPO moves.
+ */
+const REPO_NAME = REPO.split('/').pop() ?? REPO;
 const RELEASES_URL = `${REPO_URL}/releases/latest`;
 const RELEASE_DOWNLOAD_BASE = `${REPO_URL}/releases/latest/download`;
 const UPDATER_MANIFEST_URL = `${RELEASE_DOWNLOAD_BASE}/latest.json`;
@@ -307,16 +312,36 @@ function patchAppConstants(root) {
 }
 
 /**
+ * The two repository links in the notice name the project, not the `owner/name`
+ * slug it lives under. A tree patched by an earlier revision of this script
+ * already carries the notice with the old labels — there is no upstream text
+ * left to anchor on — so the labels are repaired in place.
+ */
+const ABOUT_LINK_LABELS = [
+  {
+    label: 'AboutWindow.tsx/upstream link label',
+    from: `<Link href='https://github.com/readest/readest' className='text-blue-500 underline'>\n                github.com/readest/readest\n              </Link>`,
+    to: `<Link href='https://github.com/readest/readest' className='text-blue-500 underline'>\n                readest\n              </Link>`,
+  },
+  {
+    label: 'AboutWindow.tsx/project link label',
+    from: `<Link href='${REPO_URL}' className='text-blue-500 underline'>\n                ${REPO}\n              </Link>`,
+    // Split across lines like the licence link above it: the one-line form broke
+    // the formatter's 100 columns once the label stopped being the URL.
+    to: `<Link\n                href='${REPO_URL}'\n                className='text-blue-500 underline'\n              >\n                ${REPO_NAME}\n              </Link>`,
+  },
+];
+
+/**
  * AGPL section 5 wants a modified version to carry a prominent notice, and the
  * About dialog is the one place a user actually reads.
  */
 function patchAboutWindow(root) {
   const file = path.join(root, 'apps', 'readest-app', 'src', 'components', 'AboutWindow.tsx');
   const { text: original, eol } = readText(file);
-  if (original.includes(SENTINEL_NOTICE)) {
-    log('AboutWindow.tsx: modification notice already present');
-    return;
-  }
+
+  const needsNotice = !original.includes(SENTINEL_NOTICE);
+  if (!needsNotice) log('AboutWindow.tsx: modification notice already present');
 
   const anchor = `            <p className='text-neutral-content text-xs'>
               This software is licensed under the{' '}
@@ -337,7 +362,7 @@ function patchAboutWindow(root) {
               .
             </p>`;
 
-  if (!original.includes(anchor)) {
+  if (needsNotice && !original.includes(anchor)) {
     fail('AboutWindow.tsx: the licence and source paragraphs moved; update tools/unlock.mjs.');
   }
 
@@ -357,19 +382,33 @@ function patchAboutWindow(root) {
               , and you are free to use, modify and distribute it under those terms. The upstream
               source is at{' '}
               <Link href='https://github.com/readest/readest' className='text-blue-500 underline'>
-                github.com/readest/readest
+                readest
               </Link>
               . This copy is an unofficial, modified build of it: the premium client features are
               unlocked, and updates come from this project&apos;s own releases instead of
               readest.com. The patches and the exact build recipe are at{' '}
-              <Link href='${REPO_URL}' className='text-blue-500 underline'>
-                ${REPO}
+              <Link
+                href='${REPO_URL}'
+                className='text-blue-500 underline'
+              >
+                ${REPO_NAME}
               </Link>
               .
             </p>`;
 
-  writeText(file, original.replace(anchor, () => notice), eol);
-  log(`AboutWindow.tsx: merged the licence, upstream source and modification notices`);
+  let text = needsNotice ? original.replace(anchor, () => notice) : original;
+  if (needsNotice) {
+    log('AboutWindow.tsx: merged the licence, upstream source and modification notices');
+  }
+
+  for (const { label, from, to } of ABOUT_LINK_LABELS) {
+    // Absent = this tree already carries the project-name label.
+    if (!text.includes(from)) continue;
+    text = replaceOnce(text, from, to, label);
+    log(`${label}: repository link now shows the project name`);
+  }
+
+  if (text !== original) writeText(file, text, eol);
 }
 
 /* -------------------------------------------------- self-hosted server URL */
@@ -393,6 +432,12 @@ function patchAboutWindow(root) {
  */
 const SERVER_URL_KEY = 'readest.serverUrl';
 const SERVER_ANON_KEY = 'readest.supabaseAnonKey';
+/**
+ * Whether the stored server is the one the app talks to. Disconnecting clears this
+ * switch and keeps the URL, so reconnecting is one click — the behaviour the WebDAV
+ * panel has, where its credentials survive a disconnect.
+ */
+const SERVER_ENABLED_KEY = 'readest.serverEnabled';
 
 const RUNTIME_CONFIG_TYPE_ANCHOR = `  apiBaseUrl?: string;`;
 
@@ -402,6 +447,7 @@ const RUNTIME_CONFIG_ANCHOR = `export const getRuntimeConfig = () =>
 const RUNTIME_CONFIG_REPLACEMENT = `// ${MARKER} keys shared with the Settings entry in MiscPanel.
 export const CUSTOM_SERVER_URL_KEY = '${SERVER_URL_KEY}';
 export const CUSTOM_SERVER_ANON_KEY = '${SERVER_ANON_KEY}';
+export const CUSTOM_SERVER_ENABLED_KEY = '${SERVER_ENABLED_KEY}';
 
 const readStoredSetting = (key: string): string | null => {
   if (typeof window === 'undefined') return null;
@@ -413,8 +459,17 @@ const readStoredSetting = (key: string): string | null => {
   }
 };
 
-/** The user's self-hosted server URL, or null to use the built-in servers. */
+/** The user's self-hosted server URL, remembered even while disconnected. */
 export const getCustomServerUrl = (): string | null => readStoredSetting(CUSTOM_SERVER_URL_KEY);
+
+/**
+ * Whether the app is pointed at that server right now. Disconnecting clears only
+ * this switch, so the address survives and a reconnect is one click — and an
+ * address stored by a build that predates the switch still counts as enabled,
+ * because only the explicit 'false' turns it off.
+ */
+export const isCustomServerEnabled = (): boolean =>
+  readStoredSetting(CUSTOM_SERVER_ENABLED_KEY) !== 'false';
 
 /**
  * Everything a self-hosted deployment replaces. One origin covers all three by
@@ -423,7 +478,7 @@ export const getCustomServerUrl = (): string | null => readStoredSetting(CUSTOM_
  */
 export const getCustomServerConfig = (): ReadestRuntimeConfig | null => {
   const url = getCustomServerUrl();
-  if (!url) return null;
+  if (!url || !isCustomServerEnabled()) return null;
   const anonKey = readStoredSetting(CUSTOM_SERVER_ANON_KEY);
   return {
     apiBaseUrl: url,
@@ -440,6 +495,251 @@ export const getRuntimeConfig = (): ReadestRuntimeConfig | undefined => {
   if (!custom) return base;
   return { ...base, ...custom };
 };`;
+
+/**
+ * The self-hosted entry is a second-level page — a row in the Custom list that
+ * pushes into a sub-page — and it mirrors the WebDAV panel: while no server is
+ * configured it is that panel's connect form (filled Connect button, probe,
+ * toasts), and once one is it is the connected view with a Disconnect button.
+ *
+ * `SENTINEL_SELF_HOSTED` marks the generated page and `PANEL_STATE_SENTINEL` the
+ * state block; together they are both the "already patched" test and how a tree
+ * carrying an earlier revision of this patch is recognised instead of being
+ * patched twice.
+ */
+const SENTINEL_SELF_HOSTED = `{/* ${MARKER} self-hosted sub-page, reached from the Custom list like Integrations → WebDAV */}`;
+const PANEL_STATE_SENTINEL = `  // ${MARKER} self-hosted server override`;
+
+/** Upstream's import line, which the panel's new row and page extend. */
+const PANEL_IMPORT_ANCHOR = `import { BoxedList } from './primitives';`;
+const PANEL_IMPORTS = `import { BoxedList, NavigationRow, SectionTitle, Tips } from './primitives';
+import SubPageHeader from './SubPageHeader';
+import { useKeyDownActions } from '@/hooks/useKeyDownActions';
+import { eventDispatcher } from '@/utils/event';
+import { fetchWithTimeout } from '@/utils/fetch';
+import { isCustomServerEnabled } from '@/services/runtimeConfig';`;
+
+/**
+ * The server state, written whole. The two long initialisers are wrapped the way
+ * the formatter wants them (100 columns), so a patched tree survives `pnpm format`
+ * untouched.
+ */
+const PANEL_STATE_BLOCK = `  // ${MARKER} self-hosted server override. The address these fields write is read
+  // by services/runtimeConfig.ts, and so is the switch that says whether the app
+  // is pointed at it.
+  const [draftServerUrl, setDraftServerUrl] = useState<string>(() =>
+    typeof window === 'undefined' ? '' : (window.localStorage?.getItem('${SERVER_URL_KEY}') ?? ''),
+  );
+  const [draftAnonKey, setDraftAnonKey] = useState<string>(() =>
+    typeof window === 'undefined'
+      ? ''
+      : (window.localStorage?.getItem('${SERVER_ANON_KEY}') ?? ''),
+  );
+  const [showSelfHosted, setShowSelfHosted] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  /** Whether the stored server is the active one — the switch Disconnect clears. */
+  const [isServerConfigured, setIsServerConfigured] = useState<boolean>(
+    () => isCustomServerEnabled() && !!draftServerUrl,
+  );
+  const storeServerSettings = (url: string, anonKey: string, enabled: boolean) => {
+    const store = (key: string, value: string) => {
+      if (value) window.localStorage.setItem(key, value);
+      else window.localStorage.removeItem(key);
+    };
+    store('${SERVER_URL_KEY}', url);
+    store('${SERVER_ANON_KEY}', anonKey);
+    // An explicit 'false' keeps the address but stops the app from using it.
+    store('${SERVER_ENABLED_KEY}', enabled ? 'true' : 'false');
+  };
+  // Connect probes the origin once, the way the WebDAV panel probes its server:
+  // the app's own fetch helper, so the answer matches what the app itself will
+  // experience, and the same user-facing strings. Any answer means the host is
+  // there — only a dead host or a 5xx refuses the connect, because a stricter
+  // status check would reject working setups that sit behind a reverse proxy.
+  const checkServerReachable = async (url: string): Promise<string | null> => {
+    let target: URL;
+    try {
+      // A bare host:port is not a URL at all: it would be resolved relative to the
+      // app's own origin and probe that instead. Anything that is not http(s) is
+      // rejected before a request is made.
+      target = new URL(\`\${url}/\`);
+    } catch {
+      return _('Please enter a valid http(s) URL');
+    }
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+      return _('Please enter a valid http(s) URL');
+    }
+    try {
+      const response = await fetchWithTimeout(target.toString(), { method: 'GET' });
+      if (response.status >= 500) {
+        return _('Unexpected server response (status {{status}})', { status: response.status });
+      }
+      return null;
+    } catch (error) {
+      return \`\${_('Network error')}: \${error instanceof Error ? error.message : String(error)}\`;
+    }
+  };
+  // Both the API base and the Supabase client are resolved once, at startup, so a
+  // change only takes effect after a reload — and the toast has to paint first.
+  const restartWithNotice = (message: string) => {
+    eventDispatcher.dispatch('toast', { type: 'info', message });
+    window.setTimeout(() => window.location.reload(), 1200);
+  };
+  const handleConnect = async () => {
+    const url = draftServerUrl.trim().replace(/\\/+$/, '');
+    if (!url) return;
+    setIsConnecting(true);
+    const problem = await checkServerReachable(url);
+    setIsConnecting(false);
+    if (problem) {
+      eventDispatcher.dispatch('toast', {
+        type: 'error',
+        message: \`\${_('Failed to connect')}: \${problem}\`,
+      });
+      return;
+    }
+    setDraftServerUrl(url);
+    setIsServerConfigured(true);
+    storeServerSettings(url, draftAnonKey.trim(), true);
+    restartWithNotice(_('Connected'));
+  };
+  const handleDisconnect = () => {
+    // Keep the address so a reconnect is one click, the way the WebDAV panel keeps
+    // its credentials; only the switch goes off, and the app falls back to the
+    // official servers on the reload.
+    setIsServerConfigured(false);
+    storeServerSettings(draftServerUrl, draftAnonKey, false);
+    restartWithNotice(_('Disconnected'));
+  };
+  // Android Back / Esc steps out of the sub-page instead of closing Settings, the
+  // way the Integrations sub-pages behave.
+  useKeyDownActions({ enabled: showSelfHosted, onCancel: () => setShowSelfHosted(false) });
+`;
+
+/** The component's main `return`, which the sub-page is emitted above. */
+const PANEL_RETURN_ANCHOR = `  return (
+    <div
+      className={clsx(
+        'my-4 w-full space-y-6',`;
+
+/** The list row that pushes into the sub-page, with its connection status. */
+const PANEL_ROW = `      <BoxedList data-setting-id='settings.custom.selfHosted'>
+        <NavigationRow
+          title={_('Self-hosted')}
+          status={isServerConfigured ? _('Connected') : _('Not connected')}
+          onClick={() => setShowSelfHosted(true)}
+        />
+      </BoxedList>
+`;
+
+const PANEL_SUB_PAGE = `  if (showSelfHosted) {
+    return (
+      <div className='my-4 w-full'>
+        ${SENTINEL_SELF_HOSTED}
+        <SubPageHeader
+          parentLabel={_('Custom')}
+          currentLabel={_('Self-hosted')}
+          description={_('Connect the app to your own Readest server')}
+          onBack={() => setShowSelfHosted(false)}
+        />
+        {isServerConfigured ? (
+          <div className='space-y-5'>
+            <p className='text-base-content/70 px-4 text-sm leading-relaxed break-all'>
+              {_('Connected to {{url}}', { url: draftServerUrl })}
+            </p>
+            <div className='flex justify-end'>
+              <button
+                type='button'
+                onClick={handleDisconnect}
+                className={clsx(
+                  'eink-bordered',
+                  'h-10 rounded-lg px-4 text-sm font-medium',
+                  'text-error hover:bg-error/10',
+                  'transition-colors duration-150',
+                  'focus-visible:ring-error/40 focus-visible:outline-hidden focus-visible:ring-2',
+                )}
+              >
+                {_('Disconnect')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form
+            className='space-y-4'
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleConnect();
+            }}
+          >
+            <div className='space-y-1.5'>
+              <SectionTitle as='label' htmlFor='selfHostedServerUrl' className='block'>
+                {_('Server URL')}
+              </SectionTitle>
+              <input
+                id='selfHostedServerUrl'
+                className='input eink-bordered h-11 w-full text-sm focus:outline-hidden'
+                type='text'
+                inputMode='url'
+                spellCheck='false'
+                autoCapitalize='off'
+                autoCorrect='off'
+                placeholder='https://readest.com'
+                value={draftServerUrl}
+                onChange={(event) => setDraftServerUrl(event.target.value)}
+              />
+            </div>
+
+            <div className='space-y-1.5'>
+              <SectionTitle as='label' htmlFor='selfHostedAnonKey' className='block'>
+                {_('Supabase anon key (optional)')}
+              </SectionTitle>
+              <input
+                id='selfHostedAnonKey'
+                className='input eink-bordered h-11 w-full text-sm focus:outline-hidden'
+                type='text'
+                spellCheck='false'
+                autoCapitalize='off'
+                autoCorrect='off'
+                value={draftAnonKey}
+                onChange={(event) => setDraftAnonKey(event.target.value)}
+              />
+            </div>
+
+            <div className='flex justify-end pt-1'>
+              <button
+                type='submit'
+                disabled={isConnecting || !draftServerUrl}
+                className={clsx(
+                  'btn btn-contrast',
+                  'h-10 min-h-10 rounded-lg border-0 px-5 text-sm font-medium',
+                  'focus-visible:ring-base-content/40 focus-visible:outline-hidden focus-visible:ring-2',
+                  isConnecting && 'opacity-60',
+                )}
+              >
+                {isConnecting ? (
+                  <span className='loading loading-spinner loading-sm' />
+                ) : (
+                  _('Connect')
+                )}
+              </button>
+            </div>
+          </form>
+        )}
+
+        <div className='mt-5'>
+          <Tips>
+            <li>
+              {_(
+                'Point the app at your own Readest server. Disconnecting returns to the official servers.',
+              )}
+            </li>
+          </Tips>
+        </div>
+      </div>
+    );
+  }
+
+`;
 
 function patchServerUrlSetting(root) {
   /* runtimeConfig.ts: accept a node base URL, then honour the stored override */
@@ -525,35 +825,30 @@ function patchServerUrlSetting(root) {
 
   const panelFile = path.join(root, 'apps', 'readest-app', 'src', 'components', 'settings', 'MiscPanel.tsx');
   const { text: panelSource, eol: panelEol } = readText(panelFile);
-  if (panelSource.includes(`${MARKER} self-hosted server`)) {
-    log('MiscPanel.tsx: server URL entry already present');
+
+  // The entry gained a second-level page in a later revision of this patch, and an
+  // earlier one of those revisions cannot be upgraded in place — its upstream
+  // anchors are gone — so it is reported instead of being patched twice.
+  if (panelSource.includes(SENTINEL_SELF_HOSTED) && panelSource.includes('const handleConnect =')) {
+    log('MiscPanel.tsx: self-hosted sub-page already present');
     return;
   }
+  if (
+    panelSource.includes(SENTINEL_SELF_HOSTED) ||
+    panelSource.includes(PANEL_STATE_SENTINEL) ||
+    panelSource.includes('settings.custom.serverUrl')
+  ) {
+    fail(
+      'MiscPanel.tsx carries an earlier revision of this patch, which cannot be upgraded in place.\n' +
+        '  Restore the file and run this script again:\n' +
+        `    git -C ${root} checkout -- apps/readest-app/src/components/settings/MiscPanel.tsx\n` +
+        '  (This checkout is for local verification only; CI always starts from upstream.)',
+    );
+  }
+
+  let panel = replaceOnce(panelSource, PANEL_IMPORT_ANCHOR, PANEL_IMPORTS, 'MiscPanel.tsx/imports');
 
   const stateAnchor = `  const [inputFocusInAndroid, setInputFocusInAndroid] = useState(false);`;
-  const stateReplacement = `  const [inputFocusInAndroid, setInputFocusInAndroid] = useState(false);
-  // ${MARKER} self-hosted server override, kept in sync with the
-  // CUSTOM_SERVER_*_KEY constants in services/runtimeConfig.ts.
-  const [draftServerUrl, setDraftServerUrl] = useState<string>(() =>
-    typeof window === 'undefined' ? '' : (window.localStorage?.getItem('${SERVER_URL_KEY}') ?? ''),
-  );
-  const [draftAnonKey, setDraftAnonKey] = useState<string>(() =>
-    typeof window === 'undefined' ? '' : (window.localStorage?.getItem('${SERVER_ANON_KEY}') ?? ''),
-  );
-  const saveServerSettings = (url: string, anonKey: string) => {
-    const store = (key: string, value: string) => {
-      if (value) window.localStorage.setItem(key, value);
-      else window.localStorage.removeItem(key);
-    };
-    store('${SERVER_URL_KEY}', url);
-    store('${SERVER_ANON_KEY}', anonKey);
-    // Both the API base and the Supabase client are resolved at module load, so
-    // the new values only take effect after a reload.
-    window.location.reload();
-  };
-  const applyServerSettings = () =>
-    saveServerSettings(draftServerUrl.trim(), draftAnonKey.trim());`;
-
   const jsxAnchor = `        'settings.custom.readerUiCss',
       )}
     </div>
@@ -563,68 +858,30 @@ function patchServerUrlSetting(root) {
   const jsxReplacement = `        'settings.custom.readerUiCss',
       )}
 
-      <BoxedList
-        title={_('Server URL')}
-        data-setting-id='settings.custom.serverUrl'
-        innerClassName='ps-0!'
-      >
-        <div className='flex flex-col gap-2 p-1'>
-          <input
-            className='input input-ghost w-full border-0 p-3 text-base outline-hidden! sm:text-sm'
-            type='url'
-            inputMode='url'
-            spellCheck='false'
-            autoCapitalize='off'
-            autoCorrect='off'
-            placeholder='https://readest.com'
-            value={draftServerUrl}
-            onChange={(e) => setDraftServerUrl(e.target.value)}
-          />
-          <input
-            className='input input-ghost w-full border-0 p-3 text-base outline-hidden! sm:text-sm'
-            type='text'
-            spellCheck='false'
-            autoCapitalize='off'
-            autoCorrect='off'
-            placeholder={_('Supabase anon key (optional)')}
-            value={draftAnonKey}
-            onChange={(e) => setDraftAnonKey(e.target.value)}
-          />
-          <div className='flex justify-end gap-2 px-1 pb-1'>
-            <button
-              type='button'
-              className='btn btn-ghost btn-sm'
-              onClick={() => saveServerSettings('', '')}
-            >
-              {_('Reset')}
-            </button>
-            <button type='button' className='btn btn-contrast btn-sm' onClick={applyServerSettings}>
-              {_('Apply')}
-            </button>
-          </div>
-        </div>
-      </BoxedList>
-      <p className='text-base-content/60 px-4 text-xs'>
-        {_(
-          'Point the app at a self-hosted Readest. Leave the URL empty to use the official servers.',
-        )}
-      </p>
-    </div>
+${PANEL_ROW}    </div>
   );
 };`;
 
-  let patched = replaceOnce(panelSource, stateAnchor, stateReplacement, 'MiscPanel.tsx/state');
-  patched = replaceOnce(patched, jsxAnchor, jsxReplacement, 'MiscPanel.tsx/serverUrlRow');
-  writeText(panelFile, patched, panelEol);
-  log('MiscPanel.tsx: added the Server URL entry');
+  panel = replaceOnce(panel, stateAnchor, `${stateAnchor}\n${PANEL_STATE_BLOCK}`, 'MiscPanel.tsx/state');
+  panel = replaceOnce(panel, jsxAnchor, jsxReplacement, 'MiscPanel.tsx/serverUrlRow');
+  panel = replaceOnce(
+    panel,
+    PANEL_RETURN_ANCHOR,
+    `${PANEL_SUB_PAGE}${PANEL_RETURN_ANCHOR}`,
+    'MiscPanel.tsx/subPage',
+  );
+
+  writeText(panelFile, panel, panelEol);
+  log('MiscPanel.tsx: the Self-hosted entry opens a second-level page');
 }
 
 /* ------------------------------------------------------------ translations */
 
 /**
- * The strings the Server entry adds that no locale carries yet. Everything else
- * on that panel reuses keys that are already translated ("Server URL", "Apply",
- * "Reset").
+ * The strings the self-hosted entry adds that no locale carries yet. Everything
+ * else on that page reuses keys that are already translated ("Custom", "Server
+ * URL", "Connect", "Disconnect", "Connected", "Not connected", "Disconnected",
+ * "Failed to connect", "Network error", "Unexpected server response", "Tips").
  *
  * The app translates by content: the English string is the key, so a locale
  * without an entry renders the key itself rather than a placeholder or a blank.
@@ -633,14 +890,20 @@ function patchServerUrlSetting(root) {
  */
 const SERVER_TRANSLATIONS = {
   'zh-CN': {
+    'Self-hosted': '自托管',
+    'Connect the app to your own Readest server': '把应用连接到自建的 Readest 服务器',
+    'Connected to {{url}}': '已连接到 {{url}}',
     'Supabase anon key (optional)': 'Supabase 匿名密钥（可选）',
-    'Point the app at a self-hosted Readest. Leave the URL empty to use the official servers.':
-      '把应用指向自建的 Readest。留空则使用官方服务器。',
+    'Point the app at your own Readest server. Disconnecting returns to the official servers.':
+      '把应用指向你自己的 Readest 服务器。断开连接即可回到官方服务器。',
   },
   'zh-TW': {
+    'Self-hosted': '自架',
+    'Connect the app to your own Readest server': '把應用連接到自架的 Readest 伺服器',
+    'Connected to {{url}}': '已連線到 {{url}}',
     'Supabase anon key (optional)': 'Supabase 匿名金鑰（選填）',
-    'Point the app at a self-hosted Readest. Leave the URL empty to use the official servers.':
-      '把應用指向自架的 Readest。留空則使用官方伺服器。',
+    'Point the app at your own Readest server. Disconnecting returns to the official servers.':
+      '把應用指向你自己的 Readest 伺服器。斷開連接即可回到官方伺服器。',
   },
 };
 
