@@ -651,8 +651,10 @@ jobs:
   # release (31–40 minutes against 12–16 for a single ABI, because it compiles
   # every ABI in one job), and the ABIs it covered are now published on their own.
   # What that costs is on the client side and is written down in README §Android:
-  # the app asks for `android-arm64` on 64-bit ARM and `android-universal`
-  # otherwise, so non-arm64 devices get their updates from Obtainium or by hand.
+  # upstream asks for `android-arm64` on 64-bit ARM and for one legacy key on
+  # everything else, so an unpatched build would leave armeabi-v7a / x86_64 / x86
+  # devices to Obtainium or a manual install. `patchAndroidUpdaterKeys` is what
+  # gives each of the four ABIs a manifest key of its own.
   # ---------------------------------------------------------------------------
   build_android:
     name: Build android (${{ matrix.family }}, ${{ matrix.variant }})

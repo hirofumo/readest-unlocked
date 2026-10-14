@@ -604,6 +604,10 @@ if (updaterSrc === null) {
     fail('updater.ts has no getAndroidPlatformKey helper');
   }
 
+  // The name alone proves nothing: upstream 0.12.16 ships a helper called
+  // getAndroidPlatformKey with a map of its own (`android-legacy` for every arch
+  // that is not arm). The map below is what says this checkout carries this
+  // recipe's patch rather than upstream's.
   const ANDROID_KEY_MAP = [
     ['aarch64', 'android-arm64'],
     ['arm', 'android-armv7'],
@@ -618,6 +622,12 @@ if (updaterSrc === null) {
     }
   }
 
+  if (/default:\s*\n\s*return null;/.test(text)) {
+    ok('the Android key helper answers null for an arch with no package');
+  } else {
+    fail("the Android key helper has no null default: upstream's 'android-legacy' would be inherited");
+  }
+
   if (text.includes('return getAndroidPlatformKey(osArchVal);')) {
     ok('the nightly channel uses the per-ABI key');
   } else {
@@ -630,10 +640,15 @@ if (updaterSrc === null) {
     fail('the Android release check does not look for this device’s ABI');
   }
 
-  if (text.includes('android-universal')) {
-    fail("updater.ts still asks for 'android-universal', which this project no longer publishes");
+  const staleUpdaterKeys = ['android-universal', 'android-legacy'].filter((key) =>
+    text.includes(key),
+  );
+  if (staleUpdaterKeys.length) {
+    fail(
+      `updater.ts mentions ${staleUpdaterKeys.map((k) => `'${k}'`).join(' / ')}, which this project publishes no manifest key for — this check scans the raw text, comments included`,
+    );
   } else {
-    ok('updater.ts asks for no Android key this project stopped publishing');
+    ok('updater.ts asks for no Android key this project does not publish');
   }
 }
 
@@ -650,15 +665,25 @@ if (updaterWindowSrc === null) {
   fail(`missing ${updaterWindowFile}`);
 } else {
   const text = lf(updaterWindowSrc);
-  if (text.includes('getAndroidPlatformKey(OS_ARCH)')) {
-    ok('the update window downloads the package for this device ABI');
+  if (text.includes('getAndroidPlatformKey(osArch())')) {
+    ok('the update window resolves the package from the device ABI');
   } else {
     fail('the update window does not resolve the package from the device ABI');
   }
-  if (text.includes('android-universal')) {
-    fail("UpdaterWindow.tsx still asks for 'android-universal'");
+  if (text.includes('if (!platformKey) return;')) {
+    ok('the update window stops when this build has no package for the arch');
   } else {
-    ok('UpdaterWindow.tsx asks for no Android key this project stopped publishing');
+    fail('the update window would read .replace() off a null key');
+  }
+  const staleWindowKeys = ['android-universal', 'android-legacy'].filter((key) =>
+    text.includes(key),
+  );
+  if (staleWindowKeys.length) {
+    fail(
+      `UpdaterWindow.tsx mentions ${staleWindowKeys.map((k) => `'${k}'`).join(' / ')}, which this project publishes no manifest key for — this check scans the raw text, comments included`,
+    );
+  } else {
+    ok('UpdaterWindow.tsx asks for no Android key this project does not publish');
   }
 }
 
