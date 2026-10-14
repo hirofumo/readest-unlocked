@@ -110,18 +110,42 @@ jobs:
         run: echo "android=true" >> "$GITHUB_OUTPUT"
 
       - name: Summary
+        env:
+          EVENT: ${{ github.event_name }}
+          FORCED: ${{ inputs.force == true }}
+          DRY_RUN: ${{ github.ref != 'refs/heads/main' }}
+          BUILD: ${{ steps.resolve.outputs.build }}
         run: |
+          # `build needed: true` on its own reads like "upstream published a new
+          # version", but every non-main ref rebuilds and `force` rebuilds on
+          # purpose. Name the reason, so a dry run does not look like a release.
+          if [ "$BUILD" != "true" ]; then
+            reason="already published; nothing to do"
+          elif [ "$DRY_RUN" = "true" ]; then
+            reason="dry run: a non-main ref always rebuilds"
+          elif [ "$FORCED" = "true" ]; then
+            reason="forced rebuild of an already published version"
+          else
+            reason="upstream published a new version"
+          fi
+          if [ "$BUILD" != "true" ]; then
+            writes="no — nothing is built"
+          elif [ "$DRY_RUN" = "true" ]; then
+            writes="no — a dry run does not touch the release"
+          else
+            writes="yes"
+          fi
           {
             echo "## Unlocked Readest build"
             echo ""
             echo "| field | value |"
             echo "| --- | --- |"
+            echo "| triggered by | \`$EVENT\` |"
             echo "| upstream ref | ${{ steps.resolve.outputs.ref }} |"
             echo "| version | ${{ steps.resolve.outputs.version }} |"
             echo "| release tag | ${{ steps.resolve.outputs.tag }} |"
-            echo "| build needed | ${{ steps.resolve.outputs.build }} |"
-            echo "| android enabled | ${{ steps.android.outputs.android == 'true' }} |"
-            echo "| publishes | ${{ github.ref == 'refs/heads/main' }} |"
+            echo "| build | $BUILD — $reason |"
+            echo "| writes to the release | $writes |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
