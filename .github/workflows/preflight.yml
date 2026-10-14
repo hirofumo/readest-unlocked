@@ -79,7 +79,7 @@ jobs:
 
       # Nothing to do with upstream, and deliberately in the cheap daily job: the
       # build workflow's release writes must stay gated on `publish`, which is
-      # what keeps a push to the `dev` branch from publishing. A platform leg
+      # what keeps a push to a `topic/**` branch from publishing. A platform leg
       # added later without that guard would otherwise publish from a branch
       # nobody builds for users.
       - name: Check the build workflow's publish gate

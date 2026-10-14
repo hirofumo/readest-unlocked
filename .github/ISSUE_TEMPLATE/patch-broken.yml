@@ -28,7 +28,7 @@ body:
     attributes:
       label: Upstream ref
       description: The tag, branch or commit the patch was applied to
-      placeholder: main, or v0.12.12
+      placeholder: main, or v0.12.16
     validations:
       required: true
 

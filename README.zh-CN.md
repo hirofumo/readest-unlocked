@@ -2,176 +2,168 @@
 
 [English](README.md) | 中文
 
-自动构建**解除客户端付费门控**的 [Readest](https://github.com/readest/readest)，并发布到本仓库的 [Releases](https://github.com/hirofumo/readest-unlocked/releases)。
+本仓库自动构建 [Readest](https://github.com/readest/readest) 的**解锁版**：去掉客户端的付费限制，产物发布在本仓库的 [Releases](https://github.com/hirofumo/readest-unlocked/releases)。
 
-本仓库是一份构建配方，不是源码树，也不是 fork。它不含任何上游代码：每个版本都由某个确切的上游 tag 加上 `tools/` 里的补丁脚本构建，而相对该 tag 的完整 diff 会以 `unlock.patch` 随 release 一起发布——改了什么始终可读，不必凭信任。
+本仓库只放构建脚本，既不含上游源码，也不是 fork。每个版本都是取一个确切的上游 tag，套上 `tools/` 里的补丁脚本构建出来的；相对该 tag 的完整 diff 会作为 `unlock.patch` 随 release 一起发布。改了什么始终看得见，不需要凭信任。
 
 ## 已解锁的客户端功能
 
-下面五项功能走的是同一个客户端判定。这些构建把它强制打开，因此对任何账号都可用——包括未登录的免费账号。
+这五项功能走的是同一个客户端付费判定。本构建让这个判定恒为 true，所以任何账号都能用，没登录的免费账号也一样。
 
-| 功能 | 在应用里的含义 |
+| 功能 | 在应用里的具体表现 |
 | --- | --- |
-| 第三方云同步 | WebDAV、S3 兼容存储桶、Google Drive、OneDrive、iCloud Drive 都可以配置并使用。 |
-| 分章朗读（TTS）音频下载 | 朗读音频可以按章节下载到本地，供离线收听。 |
-| Audiobookshelf 离线下载 | Audiobookshelf 的书籍与有声书可以存到设备上离线使用。 |
-| 受信设备配对 | Nearby BookDrop 传书不再需要为每一次传输确认。 |
-| 自定义翻译器 | 使用你自己的 OpenAI 兼容接口或你自己的 DeepL Key 进行翻译。 |
+| 第三方云同步 | 可以配置并使用 WebDAV、S3 兼容存储桶、Google Drive、OneDrive 与 iCloud Drive。 |
+| 朗读音频分章下载（TTS） | 朗读音频可以按章下载到本地，离线也能听。 |
+| Audiobookshelf 离线下载 | Audiobookshelf 的电子书与有声书可以存到设备上离线使用。 |
+| 受信设备配对 | Nearby BookDrop 传书不再逐次弹确认。 |
+| 自定义翻译 | 可以用自己的 OpenAI 兼容接口，或自己的 DeepL 密钥翻译。 |
 
-## 未解锁的功能
+## 没有解锁的部分
 
-以下项目由服务端根据账号令牌（token）判定，客户端构建无法改变这一点，本项目也不作此宣称：
+下面这些由服务端根据账号令牌（token）决定，客户端构建改不了，本项目也不声称能改：
 
 - Readest Cloud 的存储配额与上传上限
-- AI 翻译的每日字符额度
-- Send-to-Readest 专属邮箱地址
+- AI 翻译每天的字符额度
+- Send-to-Readest 的专属邮箱地址
 
-最后一项有一处需要说明：它的门控走的是本构建打开的同一个客户端判定，因此这道门控的**客户端一半**也一并打开了。结果是 Send-to-Readest 面板会向官方服务器索取邮箱地址，并在服务器拒绝该账号时显示加载失败——而未打补丁的构建在这里显示的是升级卡片。能力本身仍然由服务端决定。
+最后一项要补一句：它的判定有一半正好落在本构建打开的那个客户端检查上，所以客户端这一半也一并放开了。结果是 Send-to-Readest 面板照常向官方服务器索取邮箱地址，账号被服务器拒绝时面板显示加载失败；而未打补丁的构建在这里显示的是升级卡片。能力本身仍由服务端决定。
 
-## 自定义服务器地址
+## 下载与安装
 
-设置里的 **自托管** 入口（**自定义 → 自托管**，二级页面）和 WebDAV 面板是同一套形态：还没配置服务器时是一个表单——服务器 URL 加可选的 Supabase 匿名密钥，右下角一颗填充的 **连接**；配置好之后这一页显示当前指向的服务器，并提供 **断开连接**。两者都留空（默认）时，应用使用官方 Readest 服务器。
+`<V>` 是上游版本号，例如 `0.12.16`。每个 release 的 tag 是 `v<V>-unlocked`，产物都按 `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>` 命名：
 
-**连接** 会先用应用自己的 fetch 助手 GET 一次这个地址再落盘——所以答案是应用自己会遇到的答案——只有地址不通或服务端 5xx 才会拒绝连接。连上之后整套后端都搬到自建实例：Web/API 源、Node API 源、账号后端，以及应用为导出的批注所生成的网页链接。匿名密钥是可选的，只有当自建实例跑自己的 Supabase（其密钥与官方项目不同）时才需要填；实例沿用官方项目密钥、或根本不跑账号系统时留空即可。**断开连接** 会保留两者——地址还留在表单里，再点一次连接即可——并回到官方服务器。连接与断开都会重新加载应用——API 地址与 Supabase 客户端只在启动时解析一次；两者都先弹提示，再重载。
-
-未覆盖的部分：Web 字体与已发布封面的 CDN 域名，以及 Web 版链接的 readest.com 落地页。桌面端只在取可选资源时用到前者，缺失也能正常降级。
-
-## 发布产物
-
-`<V>` 是上游版本号，例如 `0.12.12`。每个 release 的 tag 是 `v<V>-unlocked`，所有产物都按 `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>` 命名：
-
-```
-Windows   x64 / arm64              安装包 + sig、便携 zip
-macOS     x64 / arm64              dmg、更新用 tarball + sig
-Linux     x64 / arm64              AppImage + sig、deb、rpm
-Android   replace / coexist        arm64-v8a、armeabi-v7a、x86_64、x86（各自 + sig）
-iOS       arm64                    未签名 ipa（需自签安装）
-```
-
-| 平台 | 产物 |
-| --- | --- |
-| Windows | `Readest-<V>-windows-<arch>-setup.exe` 及其 `.sig`；`Readest-<V>-windows-<arch>-portable.zip` |
-| macOS | `Readest-<V>-macos-<arch>.dmg`；`Readest-<V>-macos-<arch>-updater.tar.gz` 及其 `.sig` |
-| Linux | `Readest-<V>-linux-<arch>.AppImage` 及其 `.sig`；`Readest-<V>-linux-<arch>.deb`；`Readest-<V>-linux-<arch>.rpm` |
-| Android | `Readest-<V>-android-<family>-<abi>.apk` 及其 `.sig` |
-| iOS | `Readest-<V>-ios-arm64.ipa` |
-
-Windows 安装包与 Linux AppImage 本身就是更新产物，因此带签名。Windows 便携 zip 不会自更新：更新器下载的是清单指向的文件并把它当作可执行程序启动，而 zip 无法充当这个产物。iOS 的 IPA 是第二个例外，原因不同：Tauri 的更新器根本不支持 iOS，所以没有东西需要签名，也没有东西可以写进清单。其余平台仍然自更新。
-
-每个平台都按架构各出一份——不再有 macOS 通用包，也不再有 Android 通用 APK；Android 的每个 ABI 单独发布，好让你挑到与设备匹配的那一个。
-
-### 两个 Android 版本家族
-
-两个家族安装后都叫 **Readest**，唯一区别是 application id。
-
-| 家族 | Application id | 行为 |
+| 平台 | 架构 / 变体 | 产物 |
 | --- | --- | --- |
-| 替换版 | `com.bilingify.readest` | 与官方应用相同的身份。要在替换官方应用、或从未安装过官方应用时选它；之后从备份恢复的数据会落在同一个位置。必须先卸载官方应用——见下文。 |
+| Windows | x64、arm64 | `Readest-<V>-windows-<arch>-setup.exe` 及其 `.sig`；`Readest-<V>-windows-<arch>-portable.zip` |
+| macOS | x64、arm64 | `Readest-<V>-macos-<arch>.dmg`；`Readest-<V>-macos-<arch>-updater.tar.gz` 及其 `.sig` |
+| Linux | x64、arm64 | `Readest-<V>-linux-<arch>.AppImage` 及其 `.sig`；`Readest-<V>-linux-<arch>.deb`；`Readest-<V>-linux-<arch>.rpm` |
+| Android | 替换版 / 并存版，各含 arm64-v8a、armeabi-v7a、x86_64、x86 | `Readest-<V>-android-<family>-<abi>.apk` 及其 `.sig` |
+| iOS | arm64 | `Readest-<V>-ios-arm64.ipa`（未签名，需自行签名） |
+
+Windows 安装包和 Linux AppImage 本身就是更新用的产物，所以带 `.sig` 签名。Windows 便携版 zip 不能自更新：更新器会下载清单指向的文件，并把它当可执行程序启动，zip 当不了这个角色。iOS 的 IPA 是第二个例外，原因不同：Tauri 更新器不支持 iOS，所以既没有东西要签名，也没有东西能写进清单。其余平台都能自更新。
+
+每个平台按架构各出一份：没有 macOS 通用包，也没有 Android 通用 APK；Android 的每个 ABI 单独发布，方便你挑到和手头设备匹配的那一份。
+
+这些产物没有代码签名证书。
+
+- **Windows**：首次运行会被 SmartScreen 警告一次。安装包能自更新，便携版 zip 不能。
+- **macOS**：首次打开会被 Gatekeeper 拦下。执行 `xattr -cr /Applications/Readest.app`，然后再打开一次。
+- **Android**：挑 APK 之前先看下面的 [Android 替换版与并存版](#android-替换版与并存版)。
+- **iOS**：IPA 未签名，必须先用你自己的 Apple ID 签名才能安装——见下面的 [iOS 版本是未签名的](#ios-版本是未签名的)，里面也写了免费 Apple ID 做不到哪些事。
+- **Android 自动更新**：产物命名是稳定的，[Obtainium](https://github.com/ImranR98/Obtainium) 可以直接跟随本仓库——把 `https://github.com/hirofumo/readest-unlocked` 添加为 GitHub 源，再用正则限定到你已装的那个 APK，例如 `Readest-[\d.]+-android-replace-arm64-v8a\.apk` 或 `Readest-[\d.]+-android-coexist-armeabi-v7a\.apk`。正则要和设备上已装的那个包、以及它的 **ABI** 都对上：两个包的应用 ID 不同，不能互相更新。
+
+### Android 替换版与并存版
+
+Android 会发布两种包，装出来都叫 **Readest**，区别只在应用 ID。
+
+| 包 | 应用 ID | 行为 |
+| --- | --- | --- |
+| 替换版 | `com.bilingify.readest` | 和官方应用同一个身份。要覆盖官方应用、或者从来没装过官方应用，就选它；之后从备份恢复的数据也会落回原来的位置。装之前必须先卸载官方应用——见下文。 |
 | 并存版 | `com.hirofumo.readest.unlocked` | 与官方应用并存安装，书库从空开始。 |
 
-应用内的「关于」对话框会说明当前安装的是哪一个。
+装的是哪一种，可以在应用的「关于」对话框里看到。
 
-两个家族使用同一份自行生成的 Android 密钥签名。该密钥不是上游的密钥，因此两个家族都无法就地更新官方应用，官方应用也无法就地更新这两个家族中的任何一个。签名与已安装应用不一致时 Android 会拒绝安装，所以必须先卸载官方版本——这会清除应用本地数据，除非从备份恢复——或者改用并存版。
+两种包用同一把自行生成的 Android 密钥签名。这把密钥不是上游的，所以两者都不能就地升级官方应用，官方应用也不能就地升级它们中的任何一个。签名与已安装版本不一致时 Android 会拒绝安装，因此必须先卸载官方版本（这会清掉应用本地数据，除非从备份恢复），或者改用并存版。
 
-桌面端的情况不同：桌面构建同样保留上游的 identifier，因此读取的是官方应用用过的同一个应用数据目录，书库、设置与阅读进度无需重新导入即可延续。这是 identifier 未改动的结果，而不是另外做过验证的保证。
+桌面端是另一回事：桌面构建沿用上游的应用 ID，读的是官方应用用过的那个应用数据目录，书库、设置和阅读进度不用重新导入就能接着用。这是应用 ID 没改带来的结果，不是另外验证过的保证。
 
-**该下哪个 APK，以及谁自更新。** 四个 ABI 是分开发布的：`arm64-v8a` 给现在的手机与平板，`armeabi-v7a` 给较老的 32 位 ARM 设备，`x86_64` / `x86` 给模拟器与 x86 设备。两个家族是同一个应用的两个 application id，所以先选家族、再选 ABI。**每个 ABI 都有应用内更新**：应用会按设备取对应的清单键（`android-arm64`、`android-armv7`、`android-x86_64`、`android-x86`），而每份清单都带齐这四个键，各自指向为该 ABI 构建的包。这个按键映射是本构建补丁的一部分——未打补丁的上游构建只认识 `android-arm64` 与 `android-universal`，在其它 ABI 上什么也取不到。
+**该下哪个 APK，谁能自更新。** 四个 ABI 分开发布：`arm64-v8a` 给现在的手机和平板，`armeabi-v7a` 给较老的 32 位 ARM 设备，`x86_64` / `x86` 给模拟器和 x86 机器。两者是同一个应用、两个不同的应用 ID，所以先定用哪一种，再选 ABI。每个 ABI 都能在应用内更新：应用会按当前设备取对应的清单键（`android-arm64`、`android-armv7`、`android-x86_64`、`android-x86`），而每份清单里这四个键都齐，各自指向为该 ABI 构建的包。这套按键映射是本构建补丁的一部分——未打补丁的上游构建只会取三个键：64 位 ARM 取 `android-arm64`，32 位 ARM 取 `android-armv7`，其余架构（`x86_64`、`x86`）一律取 `android-legacy`。本仓库不发布 `android-legacy` 指向的包，所以那两个架构永远等不到更新。
 
 ### iOS 版本是未签名的
 
-本仓库没有 Apple 证书，因此 iOS 产物是一个**诚实的未签名 IPA**：单独拿出来什么也装不上。它就是应用本体（为 arm64 设备归档并打包为 `Payload/Readest.app`），签名是你那一侧的事——用 AltStore、SideStore、Sideloadly 或 Xcode，配上你自己的 Apple ID 与描述文件。
+本仓库没有 Apple 证书，因此 iOS 产物是一份**未签名**的 IPA——这一点我们如实说明：单独拿出来什么都装不上。它就是应用本体（按 arm64 归档，打包成 `Payload/Readest.app`），签名那一步在你这边完成——用 AltStore、SideStore、Sideloadly 或 Xcode，配上你自己的 Apple ID 与描述文件。
 
-签出来的应用能用到什么，取决于你用来签名的账号。App Groups 对免费的个人团队不可用，而阅读小组件与分享扩展都依赖它，因此除非用付费团队签名，这两个功能预计会缺功能或直接不可用。这个包保留上游的 bundle id `com.bilingify.readest`，所以想覆盖设备上的 App Store 版本，得先删掉那个版本。
+签出来能用多少功能，取决于你签名用的账号。免费的个人团队用不了 App Groups，而阅读小组件和分享扩展都依赖它，所以除非用付费团队签名，这两个功能会有缺失或直接不可用。这个包沿用上游的包名 `com.bilingify.readest`，所以想覆盖设备上已有的 App Store 版 Readest，得先删掉那一份。
 
-**以上这些都没有在 CI 上做过真机验证。** 构建流程证明的是包在结构上正确（见 [release 是怎么被验证的](#release-是怎么被验证的)），而不是它装得上、跑得起来。第一次装到设备上，请当作你自己的测试。
+**以上这些都没有在 CI 上做过真机验证。** 构建能证明的是包在结构上没问题（见 [发布是怎么验证的](#发布是怎么验证的)），而不是它装得上、跑得起来。第一次装到设备上，请当作你自己的测试。
 
-## 版本是怎么产出的
+## 校验下载
 
-上游每天检查一次。当上游发布了本仓库还没有对应 release 的版本时，它会为下面每个平台各构建一份，并以 `v<V>-unlocked` 发布；上游没有新版本的日子，只花掉那一次检查。也可以手动触发一次重建，并指定上游的 tag、分支或 commit。
+有两件相互独立的事可以校验，它们回答的是不同问题。
 
-每个 release 都出自同一套流程：checkout 上游 tag、套用 `tools/` 里的补丁脚本、断言源码已按要求修补、编译、断言编译产物，然后把每个包读回来核对，最后才上传。
+**文件完整送达。** 每个 release 都会发布 `SHA256SUMS`，格式就是 `shasum` 的输出，标准工具可以直接读：
 
-补丁如果不再贴合上游代码，会让构建失败而不是被跳过：悄悄发布一个仍被锁住的包，是本项目唯一拒绝出现的结局。
+```bash
+gh release download v0.12.16-unlocked --repo hirofumo/readest-unlocked --pattern SHA256SUMS
+# 再下载你要的那一个产物，然后：
+sha256sum -c SHA256SUMS --ignore-missing      # 或：shasum -a 256 -c SHA256SUMS --ignore-missing
+```
+
+**文件确实是在这里构建的。** 每个 release 还带有构建来源 attestation——GitHub 用绑定到本次 workflow 运行的短期证书为它签名：
+
+```bash
+gh attestation verify Readest-0.12.16-windows-x64-setup.exe --repo hirofumo/readest-unlocked
+```
+
+任何产物都能这样验，Android 的 APK 与 iOS 的 IPA 也一样。只有文件确实出自本仓库的某次 workflow 运行，这条命令才会通过，并告诉你它来自哪个 commit、哪一次运行。它**不**保证代码本身无害——要判断那一点，得去读补丁：每个 release 还附带 `unlock.patch`（相对上游 commit 的完整 diff）与 `BUILD.md`（写明上游 commit、本仓库的 commit、构建期变量，以及如何校验下载）。
 
 ## 自更新
 
 应用从本仓库的 releases 自更新，而不是从 readest.com。
 
-每个 release 都会发布签名后的更新清单——替换版 Android 家族与桌面构建用 `latest.json`，并存版 Android 家族用 `latest-coexist.json`——以及 Tauri 更新器用来校验的 `.sig` 文件；校验所用的公钥已编译进应用内。上面提到的 Windows 便携 zip 与 iOS 的 IPA 是例外，都不会自更新。对应的私钥只保存在本仓库的 secrets 中，绝不会随构建分发。请务必保存好这份私钥与它的口令：由于配对的公钥已编译进应用内，一旦丢失，将来的任何 release 都无法签名，已安装的应用也会停止接受更新。
-
-## release 是怎么被验证的
-
-三层检查立在补丁与发布之间，每一层都不比它实际检查的内容更强：
-
-1. **源码。** 补丁对源码树的所有断言都在编译之前跑完，因此补丁不再贴合上游代码时会几秒钟失败，而不是等很久之后。
-2. **编译产物。** 应用真正发布的 JavaScript 会被搜一遍 `__READEST_UNLOCKED__` 构建标记——这是「改对了文件」和「发布的包确实已解锁」之间的区别。被补丁的模块还会在运行时设置 `globalThis.__READEST_UNLOCKED__ = true`，所以已安装的构建也能用同样的方式检查。
-3. **包本身。** 文件是被读出来的，而不是被信任的：每个 Android APK 都解包核对 application id、ABI 与签名证书，iOS 的 IPA 同样核对 bundle id、版本号、架构、内嵌扩展与「确实未签名」。
-
-任一检查失败都会让构建失败并且不产出任何产物，因此不会发布一个只打了一半补丁的 release。
-
-## 校验下载
-
-有两件相互独立的事可以校验，它们回答的是不同的问题。
-
-**文件在传输中没有损坏。** 每个 release 都会发布 `SHA256SUMS`，格式就是 `shasum` 的输出，标准工具可直接使用：
-
-```bash
-gh release download v0.12.12-unlocked --repo hirofumo/readest-unlocked --pattern SHA256SUMS
-# 再下载你需要的那个产物，然后：
-sha256sum -c SHA256SUMS --ignore-missing      # 或：shasum -a 256 -c SHA256SUMS --ignore-missing
-```
-
-**文件确实是在这里构建的。** 每个 release 还带构建来源证明（build provenance attestation），由 GitHub 用与本次 workflow 运行绑定的短期证书签名：
-
-```bash
-gh attestation verify Readest-0.12.12-windows-x64-setup.exe --repo hirofumo/readest-unlocked
-```
-
-任何产物都可以这样验，Android 的 APK 与 iOS 的 IPA 也一样。只有当文件确实出自本仓库的某次 workflow 运行时，这条命令才会成功，并会告诉你它来自哪个提交、哪一次运行。它**不**宣称代码本身无害——要看那个，去读补丁：每个 release 还附带 `unlock.patch`（相对上游提交的完整 diff）与 `BUILD.md`（写明上游提交、本仓库提交、构建期变量，以及如何校验下载）。
-
-## 安装
-
-这些产物没有代码签名证书。
-
-- **Windows**：首次运行时 SmartScreen 会警告。安装包会自更新；便携 zip 不会。
-- **macOS**：首次打开会被 Gatekeeper 拦下。执行 `xattr -cr /Applications/Readest.app`，然后再打开应用。
-- **Android**：选择 APK 前请先看上面的[两个 Android 版本家族](#两个-android-版本家族)。
-- **iOS**：IPA 是未签名的，必须先用自己的 Apple ID 签名才能安装——见上面的 [iOS 版本是未签名的](#ios-版本是未签名的)，其中包括免费 Apple ID 做不到的事。
-- **Android 自动更新**：产物命名是稳定的，因此 [Obtainium](https://github.com/ImranR98/Obtainium) 可以直接跟随本仓库——把 `https://github.com/hirofumo/readest-unlocked` 添加为 GitHub 源，再用正则限定到你已安装的那个 APK，例如 `Readest-[\d.]+-android-replace-arm64-v8a\.apk` 或 `Readest-[\d.]+-android-coexist-armeabi-v7a\.apk`。请选与设备上已装家族**和 ABI**匹配的那条：两个家族的 application id 不同，无法互相更新。
+每个 release 都会发布签名过的更新清单——替换版 Android 与桌面构建用 `latest.json`，并存版 Android 用 `latest-coexist.json`——外加 Tauri 更新器用来校验的 `.sig` 文件，校验所用的公钥已经编译进应用内。上面提到的 Windows 便携版 zip 和 iOS IPA 是例外，走不了自更新。对应的私钥只保存在本仓库的 secrets 里，绝不会进入构建产物。请务必保管好这份私钥与它的口令：配对的公钥已经编译进应用，一旦丢失，将来任何 release 都签不出来，已安装的应用也会停止接受更新。
 
 ## 自托管
 
-设置里的 **自托管** 可以把客户端指向你自己的 Readest 实例。服务端用上游的：[readest/docker](https://github.com/readest/readest/tree/main/docker) 提供 `compose.yaml`，能拉起应用、API 与一套 Supabase，其 README 记录了全部环境变量。
+自托管分成两半：客户端这边用设置里的入口指向你自己的服务器，服务端自己跑一个。
 
-选构建之前值得知道一件事：`SELF_HOSTED=true` 是**上游自己的**开关，且他们发布的镜像默认就把它设为 `true`——上游本来就为自托管部署解锁 premium 客户端功能，无论是否登录。本项目只是把同一条规则应用到桌面、Android 与 iOS 构建上（上游不发布这几种），并没有另外发明一套规则。
+### 在设置里指向你的服务器
 
-把客户端指向你的实例，用的就是上面[自定义服务器地址](#自定义服务器地址)里的 **自托管** 入口。
+设置里有 **自托管** 这一项（**自定义 → 自托管**，点进去是二级页面），形态和 WebDAV 面板一致，同样有两种状态。还没配置服务器时，这一页就是连接表单：服务器 URL、可选的 Supabase 匿名密钥，加上一颗实心的 **连接** 按钮。配置好之后，这一页显示当前指向哪个地址，并给出 **断开连接**。
+
+**连接** 会先用应用自己的 fetch 助手对该地址发一次 GET 做探测，所以拿到的结果就是应用本身会遇到的结果；只有地址不通或服务端返回 5xx 才会拒绝连接。地址一旦生效，整套后端都会切到自建实例：Web/API 地址、Node API 地址、账号后端，以及应用为导出批注生成的网页链接。匿名密钥可以留空，只有自建实例跑着自己的 Supabase（密钥与官方项目不同）时才需要填；实例沿用官方项目密钥、或者根本不跑账号系统，留空即可。**断开连接** 不会清掉已填内容——地址还留在表单里，想连回来点一下就行——然后回到官方服务器。连接与断开都会重载应用，因为 API 地址和 Supabase 客户端只在启动时解析一次；两种情况都是先弹一条 toast 提示，再重载应用。
+
+没有覆盖的部分：Web 字体与已发布封面的 CDN 域名，以及 Web 版会链接到的 readest.com 页面。桌面端只在前者这类可选资源上用到 CDN，取不到也能正常降级。
+
+### 自己跑一个服务端
+
+服务端用上游的：[readest/docker](https://github.com/readest/readest/tree/main/docker) 提供 `compose.yaml`，能一次拉起应用、API 与一套 Supabase，环境变量见它自己的 README。
+
+选构建之前有一件事值得知道：`SELF_HOSTED=true` 是**上游自己的**开关，而且他们发布的镜像默认就打开它——上游本来就为自托管部署解锁 premium 客户端功能，登录与否都一样。本项目只是把同一条规则用在桌面、Android 和 iOS 构建上（这几种上游不发布），没有另外发明一条规则。
 
 ### 完全不用账号
 
-这里没有任何东西要求 Readest 账号。未登录时应用维护本地书库，同步可以走 WebDAV 或 S3 兼容存储——两者都属于第三方同步，在本构建中均已解锁。只有 Readest Cloud、Send-to-Readest 邮箱与共享批注才需要账号后端。
+这里没有任何一步需要 Readest 账号。没有登录用户时，应用维护本地书库，同步可以走 WebDAV 或 S3 兼容存储——两者都属于第三方同步，本构建都解锁了。只有 Readest Cloud、Send-to-Readest 邮箱和共享批注才需要账号后端。
+
+## 发布流程
+
+本仓库每天检查一次上游。上游一旦发布了本仓库还没有对应 release 的版本，就会为下面每个平台各构建一份，以 `v<V>-unlocked` 发布出去；上游没有新版本的日子，只花掉这一次检查。也可以手动触发重建，还能指定要构建的上游 tag、分支或 commit。
+
+每个 release 都出自同一套步骤：checkout 上游 tag、套用 `tools/` 里的补丁脚本、断言源码已按要求修改、编译、断言编译产物、把每个包读回来核对，最后才上传。
+
+补丁如果对不上上游代码，构建会直接失败而不是跳过：悄悄发布一个仍然锁着的包，是本项目唯一不能接受的结果。
+
+## 发布是怎么验证的
+
+从补丁到发布之间立着三道检查，每一道只声明它真正测到的东西：
+
+1. **源码。** 补丁对源码的所有断言都在编译之前跑完，所以补丁一旦对不上上游代码，几秒钟就会失败，而不是等编译跑完。
+2. **编译产物。** 会去应用真正要发布的 JavaScript 里搜 `__READEST_UNLOCKED__` 构建标记——这正是「改对了文件」与「发布的包确实已解锁」之间的区别。被补丁的模块还会在运行时设置 `globalThis.__READEST_UNLOCKED__ = true`，所以已经装上的构建也能用同样方式检查。
+3. **包本身。** 文件是被读出来的，不是被信任的：每个 Android APK 都解开核对应用 ID、包含的 ABI 与签名证书；iOS 的 IPA 同样核对包名、版本号、架构、内嵌扩展，以及它确实未签名。
+
+任何一道检查失败都会让构建失败并且不产出任何产物，所以只打了一半补丁的 release 不会被发布出去。
 
 ## 许可与合规
 
-Readest 采用 **AGPL-3.0** 许可，本仓库的脚本与这里发布的二进制同样如此。完整的许可证文本见 [LICENSE](LICENSE)。
+Readest 使用 **AGPL-3.0** 许可，本仓库的脚本和这里发布的二进制也一样。完整许可证文本见 [LICENSE](LICENSE)。
 
-AGPL 要求分发修改版本的人提供 Corresponding Source，并附带醒目的「文件已被修改」声明。本仓库就是那份源码：它包含完整的补丁脚本与确切的构建配方。补丁触及的每个文件都在原处用 `[readest-unlocked]` 注释标明了所做的改动，只有三份 JSON 文件例外——`tauri.conf.json` 与两份 locale 文件无法承载注释，它们由 About 对话框中的声明覆盖。
+AGPL 要求分发修改版本的人提供 Corresponding Source，并醒目标明文件已被修改。本仓库就是那份源码：完整的补丁脚本、确切的构建步骤都在这里。补丁动过的每个文件都在原处留了一行 `[readest-unlocked]` 注释说明改了什么，只有三份 JSON 文件放不下注释——`tauri.conf.json` 和两份 locale 文件——它们的修改声明写在「关于」对话框里。
 
-发布的二进制保留上游的版权声明、许可证文本与项目标识。这里没有任何东西移除或替换它们。
+发布的二进制保留上游的版权声明、许可证文本与项目标识，这里没有任何东西移除或替换它们。
 
-本项目与 Readest 及 Bilingify LLC 无隶属关系，也未获其背书或支持。「Readest」及其徽标归其所有者所有，此处仅用于说明本构建派生自什么。本构建的支持来自本仓库，而不是上游。
+本项目与 Readest 及 Bilingify LLC 没有隶属关系，也未获其背书或支持。「Readest」及其标识归其所有者所有，此处只用来说明本构建派生自何处。本构建的支持来自本仓库，不是上游。
 
-如果这个构建对你有用，真正值得支持的是上游：Readest 是一个活跃开发中的阅读器，背后有真实的基础设施，而它的付费方案正是这些开销的来源。这里没有改变 readest.com 用户的任何约定——解锁只作用于本仓库的构建，而同样的功能对任何自建服务器的人本来也是免费的。阅读、同步或阅读器界面的 bug 属于[上游的 issue 跟踪](https://github.com/readest/readest/issues)，不该提在这里；这些构建本身的问题——下载下来不好用、某次发布失败了——才属于这里。
+如果这个构建对你有用，真正值得支持的是上游：Readest 是一个仍在活跃开发的阅读器，背后有真实的基础设施开销，付费方案正是用来支撑它的。这里没有改变 readest.com 用户的任何约定——解锁只作用于本仓库的构建，而同样的功能对任何自建服务器的人本来也是免费的。阅读、同步或阅读器界面的问题属于[上游的 issue 跟踪](https://github.com/readest/readest/issues)，不该提到这里；本构建自身的问题——下载下来不好用、某次发布失败——才属于这里。
 
-这些构建按「原样」提供，不附带任何担保，仅供个人使用。使用应用所对接的任何第三方服务时，你需要自行遵守其许可与条款。
+这些构建按「原样」提供，不附带任何担保，仅供个人使用。使用应用对接的任何第三方服务时，你需要自行遵守其许可与条款。
 
 ## 仓库里有什么
 
 ```
-.github/workflows/   发布配方，以及每日对上游的检查
+.github/workflows/   构建与发布流程，以及每天对上游的检查
 tools/               补丁脚本，以及组装一次发布的工具
 helpers/             少量按平台划分的构建辅助脚本
 LICENSE              AGPL-3.0
 ```
 
-这里的补丁脚本就是这些二进制的 Corresponding Source。它们是普通的 Node.js 文件，本身没有构建步骤；对上游文件所做的每处改动都在原处标注，因此这份配方可以从头读到尾，不必先运行什么。
+这里的补丁脚本就是这些二进制的 Corresponding Source。它们是普通的 Node.js 文件，本身没有构建步骤；对上游文件所做的每处改动都在原处有标注，因此这些脚本可以从头读到尾，不必先运行任何东西。

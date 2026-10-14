@@ -4,9 +4,9 @@
  * workflow that writes to a release is guarded by the `publish` output of
  * `detect`, which is `true` only on `main`.
  *
- * Why this exists: the guard is what makes pushing to `dev` safe, and it is
- * invisible when it is right. A platform added later, or a new upload step
- * copied from an old one, would happily publish from a development branch — and
+ * Why this exists: the guard is what makes pushing to a `topic/**` branch safe,
+ * and it is invisible when it is right. A platform added later, or a new upload
+ * step copied from an old one, would happily publish from a scratch branch — and
  * nobody would notice until a release had assets from a branch nobody built for
  * users. This check runs in preflight every day, so the invariant fails loudly
  * instead.

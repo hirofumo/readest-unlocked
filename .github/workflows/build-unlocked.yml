@@ -5,11 +5,11 @@ name: Build unlocked Readest
 # from. The upstream source is never committed here: each run checks the tag out,
 # applies tools/unlock.mjs, and builds. See README.md.
 #
-# `main` publishes. Any other ref — the `dev` branch a push comes from, or a
-# manual dispatch from it — runs the same matrix as a dry run: every leg builds
-# and asserts, and nothing writes to the release. The switch is the `publish`
-# output of `detect`, and tools/check-workflow.mjs asserts that every release
-# write in this file is guarded by it.
+# `main` publishes. Any other ref — the `topic/**` branch a push comes from, or
+# a manual dispatch from any branch — runs the same matrix as a dry run: every
+# leg builds and asserts, and nothing writes to the release. The switch is the
+# `publish` output of `detect`, and tools/check-workflow.mjs asserts that every
+# release write in this file is guarded by it.
 
 on:
   push:
@@ -43,9 +43,9 @@ permissions:
   contents: read
 
 # One publishing group for main, so a scheduled run and a manual one never write
-# the same release at once. A dev push gets its own group and cancels its older
-# run: it writes nothing, and the only thing a queue of superseded dry runs costs
-# is runners.
+# the same release at once. A `topic/**` push gets its own group and cancels its
+# older run: it writes nothing, and the only thing a queue of superseded dry runs
+# costs is runners.
 concurrency:
   group: build-unlocked-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -152,7 +152,7 @@ jobs:
           else
             NOTES="Automatically built unlocked Readest $VERSION, from $UPSTREAM_REPO at $REF.
 
-          Premium client gates are disabled: third-party cloud sync (WebDAV, S3-compatible bucket, Google Drive, OneDrive, iCloud Drive), per-chapter read-aloud audio download, Audiobookshelf offline downloads, trusted-device pairing, and custom translators with your own API key. Settings also gains a Server URL entry, so the app can be pointed at a self-hosted Readest instead of the official servers.
+          Premium client gates are disabled: third-party cloud sync (WebDAV, S3-compatible bucket, Google Drive, OneDrive, iCloud Drive), per-chapter read-aloud audio download, Audiobookshelf offline downloads, trusted-device pairing, and custom translators with your own API key. Settings also gains a Self-hosted entry (Custom -> Self-hosted), so the app can be pointed at your own Readest server instead of the official ones.
 
           Still decided by the upstream service, not unlockable in a client build: Readest Cloud storage quota, daily AI translation quota, and the Send-to-Readest email address.
 
@@ -234,7 +234,7 @@ jobs:
 
       # `unlock.mjs` only rewrites files, so this job needs no `pnpm install`
       # and reaches a verdict in about a minute instead of competing with the
-      # thirteen build legs for a runner.
+      # fifteen build legs for a runner.
       - name: Apply the unlock patch
         run: node .recipe/tools/unlock.mjs
 
@@ -403,7 +403,7 @@ jobs:
           # compiling cold on every release. Cost and the 10 GB budget: see
           # TECHNICAL.md §6.
           key: ${{ format('{0}-cargo', matrix.config.name) }}
-          # Read-only on a dry run: dev can restore main's entries, and the guard
+          # Read-only on a dry run: a topic branch can restore main's entries, and the guard
           # keeps it from writing a second copy of the ~8 GB of Rust caches. The
           # repository budget is already past 10 GB (TECHNICAL.md §6).
           save-if: ${{ needs.detect.outputs.publish == 'true' }}
@@ -1445,8 +1445,8 @@ jobs:
       # a supported configuration rather than a problem.
       #
       # A dry run stays out of this channel on purpose: the issue title names a
-      # release, and a dev failure is not a release failure. The pusher gets the
-      # red cross and the notification, which is who needs it.
+      # release, and a dry-run failure is not a release failure. The pusher gets
+      # the red cross and the notification, which is who needs it.
       - name: Open or update the failure issue
         if: >-
           needs.detect.outputs.build == 'true' &&
