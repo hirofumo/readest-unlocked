@@ -5,9 +5,9 @@ name: Build unlocked Readest
 #   release    the numbered release of a new upstream version, tagged v<version>,
 #              with the signed updater manifests the app updates itself from.
 #   autobuild  a daily pre-release of upstream `main`, tagged AutoBuild and
-#              replaced on every build. It publishes its own
-#              latest-autobuild*.json and never touches the numbered release's
-#              update path.
+#              replaced on every build. It writes the nightly.json manifests the
+#              app's Nightly Builds channel reads, and never touches the numbered
+#              release's update path.
 #
 # The upstream source is never committed here: each run checks the resolved
 # upstream commit out, applies tools/unlock.mjs, and builds. See README.md.
@@ -1331,9 +1331,10 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # The app updates itself from these manifests, so they are assembled only once
-  # every leg has uploaded its signatures. A manifest missing a platform key
-  # means that platform is simply not offered an update, which the run summary
-  # reports.
+  # every leg has uploaded its signatures. The numbered release writes
+  # latest.json; the AutoBuild pre-release writes nightly.json, which the app's
+  # Nightly Builds channel reads. A manifest missing a platform key means that
+  # platform is simply not offered an update, which the run summary reports.
   # ---------------------------------------------------------------------------
   manifest:
     name: Publish updater manifests
@@ -1412,12 +1413,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$MODE" = "autobuild" ]; then
+            # `nightly` is the key set the app's Nightly Builds channel looks up;
+            # the manifest names are the ones that channel downloads.
             node tools/make-manifest.mjs --dir sigs --version "$MANIFEST_VERSION" \
-              --base-url "$AUTO_BASE_URL" \
-              --prefix "$PREFIX" --variant replace --out latest-autobuild.json
+              --base-url "$AUTO_BASE_URL" --channel nightly \
+              --prefix "$PREFIX" --variant replace --out nightly.json
             node tools/make-manifest.mjs --dir sigs --version "$MANIFEST_VERSION" \
-              --base-url "$AUTO_BASE_URL" \
-              --prefix "$PREFIX" --variant coexist --out latest-autobuild-coexist.json
+              --base-url "$AUTO_BASE_URL" --channel nightly \
+              --prefix "$PREFIX" --variant coexist --out nightly-coexist.json
           else
             node tools/make-manifest.mjs --dir sigs --version "$MANIFEST_VERSION" \
               --prefix "$PREFIX" --variant replace --out latest.json
@@ -1436,11 +1439,9 @@ jobs:
           set -euo pipefail
 
           if [ "$MODE" = "autobuild" ]; then
-            # The pre-release has manifest names of its own. The app never
-            # fetches these, so a daily build cannot change the numbered
-            # release's update path — they are here for tooling and for a
-            # future client that opts in to the pre-release channel.
-            gh release upload "$TAG" latest-autobuild.json latest-autobuild-coexist.json --clobber
+            # The nightly channel reads these two files from the AutoBuild
+            # release; the numbered release's latest.json is never touched here.
+            gh release upload "$TAG" nightly.json nightly-coexist.json --clobber
             exit 0
           fi
 

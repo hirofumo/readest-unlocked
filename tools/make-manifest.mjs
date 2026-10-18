@@ -9,8 +9,9 @@
  *
  * The manifest's `version` and the asset prefix are separate arguments: the
  * numbered release has both as `Readest-<version>-...`, while the daily
- * AutoBuild publishes `Readest-<date>-<sha>-...` assets under a date-based
- * manifest version (2026.1.1).
+ * AutoBuild publishes `Readest-<date>-<sha>-...` assets under a nightly version
+ * (`<version>-<YYYYMMDDHH>`). `--channel nightly` writes the platform keys the
+ * app's Nightly Builds channel looks up; that channel is the rolling AutoBuild.
  *
  * Two manifests are produced for each channel:
  *   latest.json               desktop + the Android family that replaces the official app
@@ -77,6 +78,19 @@ const DESKTOP_ENTRIES = [
   },
 ];
 
+// The app's Nightly Builds channel looks up its own key set (see
+// `getNightlyPlatformKey` in src/helpers/updater.ts): the bare installer keys and
+// the AppImage-only Linux keys. Windows portable is a zip and is not an in-place
+// update target, so it stays on manual downloads and has no entry here.
+const NIGHTLY_DESKTOP_ENTRIES = [
+  { keys: ['windows-x86_64'], asset: (p) => `${p}-windows-x64-setup.exe` },
+  { keys: ['windows-aarch64'], asset: (p) => `${p}-windows-arm64-setup.exe` },
+  { keys: ['darwin-x86_64'], asset: (p) => `${p}-macos-x64-updater.tar.gz` },
+  { keys: ['darwin-aarch64'], asset: (p) => `${p}-macos-arm64-updater.tar.gz` },
+  { keys: ['linux-x86_64-appimage'], asset: (p) => `${p}-linux-x64.AppImage` },
+  { keys: ['linux-aarch64-appimage'], asset: (p) => `${p}-linux-arm64.AppImage` },
+];
+
 // Android clients derive their key from the device arch, and this recipe patches
 // that derivation (`getAndroidPlatformKey` in `src/helpers/updater.ts`) to ask for
 // one key per ABI: android-arm64, android-armv7, android-x86_64 and android-x86.
@@ -115,6 +129,7 @@ const version = arg('version', '');
 const prefix = arg('prefix', '') || `Readest-${version}`;
 const outFile = path.resolve(arg('out', 'latest.json'));
 const variant = arg('variant', 'replace');
+const channel = arg('channel', 'stable');
 const baseUrl = arg('base-url', DEFAULT_BASE_URL).replace(/\/+$/, '');
 
 if (!version) fail('--version is required (the version the manifest advertises, e.g. 0.12.12)');
@@ -122,10 +137,14 @@ if (!prefix) fail('--prefix is empty');
 if (variant !== 'replace' && variant !== 'coexist') {
   fail(`--variant must be "replace" or "coexist", got "${variant}"`);
 }
+if (channel !== 'stable' && channel !== 'nightly') {
+  fail(`--channel must be "stable" or "nightly", got "${channel}"`);
+}
 if (!existsSync(sigDir)) fail(`signature directory does not exist: ${sigDir}`);
 
+const channelDesktop = channel === 'nightly' ? NIGHTLY_DESKTOP_ENTRIES : DESKTOP_ENTRIES;
 const entries =
-  variant === 'coexist' ? ANDROID_ENTRIES.coexist : [...DESKTOP_ENTRIES, ...ANDROID_ENTRIES.replace];
+  variant === 'coexist' ? ANDROID_ENTRIES.coexist : [...channelDesktop, ...ANDROID_ENTRIES.replace];
 
 const available = new Set(readdirSync(sigDir));
 const platforms = {};
@@ -170,7 +189,9 @@ const manifest = {
 };
 
 writeFileSync(outFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-console.log(`[manifest] wrote ${outFile} with ${published.length} platform key(s): ${published.join(', ')}`);
+console.log(
+  `[manifest] wrote ${outFile} (${channel}) with ${published.length} platform key(s): ${published.join(', ')}`,
+);
 
 const summaryFile = process.env['GITHUB_STEP_SUMMARY'];
 if (summaryFile) {

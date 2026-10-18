@@ -97,7 +97,7 @@ Readest-2026.10.18-767f834-android-coexist-arm64-v8a.apk
 - The naming rule is `Readest-<date>-<upstream short sha>-<platform>-<arch or variant>-<type>`, where the date looks like `2026.10.18`; the rest matches the numbered release.
 - Every build replaces the previous one: the `AutoBuild` page only ever holds the latest build, and old files are not kept.
 - It is a pre-release and may be unstable. Use the numbered release (tag `v<V>`) for everyday reading.
-- It **does not take part in in-app updates**. `AutoBuild` publishes only `latest-autobuild.json` and `latest-autobuild-coexist.json`, which the app does not read today; upgrade by downloading the new build. The numbered release's `latest.json` / `latest-coexist.json` are unaffected.
+- With **Settings → Control → Nightly Builds** enabled, the app checks `nightly.json` and installs new AutoBuilds automatically. Windows portable builds are not in this channel and still need a manual download. The numbered release's `latest.json` / `latest-coexist.json` are unaffected.
 - A day without a new upstream `main` commit costs one version resolution, not a build.
 
 ## Verifying a download

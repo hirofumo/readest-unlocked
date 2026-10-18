@@ -118,12 +118,10 @@ if (!version) {
 
 const now = new Date();
 const date = `${now.getUTCFullYear()}.${pad(now.getUTCMonth() + 1)}.${pad(now.getUTCDate())}`;
-// The numbered release advertises the upstream version; the daily pre-release
-// advertises its date (2026.10.18 is semver-valid) so the two channels never
-// compare against each other.
-const manifestVersion = AUTOBUILD
-  ? `${now.getUTCFullYear()}.${now.getUTCMonth() + 1}.${now.getUTCDate()}`
-  : version;
+// A nightly version is `<base>-<YYYYMMDDHH>`: the app's comparator treats a
+// nightly on the same base as newer than the numbered release it follows.
+const stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}${pad(now.getUTCHours())}`;
+const manifestVersion = AUTOBUILD ? `${version}-${stamp}` : version;
 const tag = AUTOBUILD ? 'AutoBuild' : `v${version}`;
 const assetPrefix = AUTOBUILD ? `Readest-${date}-${shortSha}` : `Readest-${version}`;
 

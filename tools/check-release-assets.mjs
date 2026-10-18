@@ -96,7 +96,7 @@ function contract({ mode, prefix }) {
   // The release's own documents, written by the pipeline rather than by a leg.
   add('SHA256SUMS', 'unlock.patch', 'BUILD.md');
   if (mode === 'autobuild') {
-    add('latest-autobuild.json', 'latest-autobuild-coexist.json');
+    add('nightly.json', 'nightly-coexist.json');
   } else {
     add('latest.json', 'latest-coexist.json', 'release-notes.json');
   }

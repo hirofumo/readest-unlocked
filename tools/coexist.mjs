@@ -23,6 +23,8 @@ import path from 'node:path';
 const MARKER = '[readest-unlocked]';
 const IDENTIFIER = process.env['READEST_COEXIST_IDENTIFIER'] ?? 'com.hirofumo.readest.unlocked';
 const MANIFEST_FILE = 'latest-coexist.json';
+const NIGHTLY_MANIFEST_URL =
+  'https://github.com/hirofumo/readest-unlocked/releases/download/AutoBuild/nightly-coexist.json';
 
 const failures = [];
 
@@ -96,27 +98,29 @@ const constantsFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 
   const { text: original, eol } = readText(constantsFile);
   let text = original;
 
-  const patterns = [
+  const rewrites = [
     {
       label: 'READEST_UPDATER_FILE',
       pattern: /export const READEST_UPDATER_FILE = `\$\{LATEST_DOWNLOAD_BASE_URL\}\/[^`]*`;/,
+      replacement: `export const READEST_UPDATER_FILE = \`\${LATEST_DOWNLOAD_BASE_URL}/${MANIFEST_FILE}\`;`,
     },
     {
       label: 'READEST_NIGHTLY_UPDATER_FILE',
-      pattern: /export const READEST_NIGHTLY_UPDATER_FILE = `\$\{LATEST_DOWNLOAD_BASE_URL\}\/[^`]*`;/,
+      // unlock.mjs writes a fixed AutoBuild URL; accept any single-quoted or
+      // template-literal shape so an older tree is repaired rather than
+      // silently left pointing at the stable manifest.
+      pattern: /export const READEST_NIGHTLY_UPDATER_FILE = [`'][^`']*[`'];/,
+      replacement: `export const READEST_NIGHTLY_UPDATER_FILE = '${NIGHTLY_MANIFEST_URL}';`,
     },
   ];
 
-  for (const { label, pattern } of patterns) {
+  for (const { label, pattern, replacement } of rewrites) {
     if (!pattern.test(text)) {
       // unlock.mjs owns these lines; reaching here means it changed shape.
       failures.push(label);
       continue;
     }
-    text = text.replace(
-      pattern,
-      () => `export const ${label} = \`\${LATEST_DOWNLOAD_BASE_URL}/${MANIFEST_FILE}\`;`,
-    );
+    text = text.replace(pattern, () => replacement);
   }
 
   if (!failures.length && text !== original) writeText(constantsFile, text, eol);
@@ -127,7 +131,7 @@ const constantsFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 
         'unlock.mjs and coexist.mjs disagree about constants.ts; update both.',
     );
   }
-  log(`updater manifest: ${MANIFEST_FILE}`);
+  log(`updater manifest: ${MANIFEST_FILE} (nightly: ${NIGHTLY_MANIFEST_URL})`);
 }
 
 /* 3. tell the two families apart where it matters --------------------------- */

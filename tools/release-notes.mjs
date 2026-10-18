@@ -74,9 +74,10 @@ const intro =
           `(https://github.com/readest/readest/commit/${upstreamSha}) on ${date}.`,
         '',
         'This is the daily, rolling build of the next Readest tree. It is replaced',
-        'by the next AutoBuild, it may be unstable, and it is **not** what the in-app',
-        'updater follows — install a new build by downloading it again. The numbered',
-        'release is the stable channel.',
+        'by the next AutoBuild and may be unstable. Turn on **Settings → Control →',
+        'Nightly Builds** to receive these builds through the in-app updater;',
+        'otherwise download a new build here. Windows portable builds do not update',
+        'in place.',
         '',
         `The unlocked patch is applied on top of upstream \`main\`; the files are` +
           ' named `Readest-<date>-<upstream commit>-...` so two builds cannot be confused.',
@@ -211,7 +212,8 @@ const about = [
     ? 'This pre-release is upstream Readest `main` plus the patch scripts in this' +
       ' repository. The complete diff ships as `unlock.patch`, and `BUILD.md` records' +
       ' the exact upstream and recipe commits. It is rebuilt daily from upstream' +
-      ' `main`, so expect unfinished work; the numbered release is the stable channel.'
+      ' `main`; with Settings → Control → Nightly Builds enabled, the app follows' +
+      ' this channel automatically. The numbered release is the stable channel.'
     : 'This is upstream Readest plus the patch scripts in this repository. The' +
       ' complete diff ships as `unlock.patch`, and `BUILD.md` records the exact' +
       ' upstream and recipe commits. Nothing is patched at runtime.',

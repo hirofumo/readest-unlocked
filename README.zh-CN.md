@@ -88,7 +88,7 @@ Readest-2026.10.18-767f834-android-coexist-arm64-v8a.apk
 - 命名规则是 `Readest-<日期>-<上游短 SHA>-<平台>-<架构或变体>-<类型>`，日期形如 `2026.10.18`，其余部分与正式版一致。
 - 每次构建都会替换上一次的资产：`AutoBuild` 页面始终只有最新一份构建，旧文件不会保留。
 - 它是预发行版，可能不稳定。日常使用请选正式版（tag `v<V>`）。
-- 它**不参与应用内更新**。`AutoBuild` 只发布 `latest-autobuild.json` 和 `latest-autobuild-coexist.json`，应用当前不读取这两个文件；要升级就重新下载安装包。正式版的 `latest.json` / `latest-coexist.json` 不受影响。
+- 打开设置 → **Control → Nightly Builds** 后，应用会从 `nightly.json` 自动检查并安装新的 AutoBuild；Windows 便携版不在此列，仍需手动重新下载。正式版的 `latest.json` / `latest-coexist.json` 不受影响。
 - 上游 `main` 没有新提交的日子，这一轮只跑一次版本解析，不会构建。
 
 ## 校验下载

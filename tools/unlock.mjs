@@ -36,6 +36,10 @@ const REPO_NAME = REPO.split('/').pop() ?? REPO;
 const RELEASES_URL = `${REPO_URL}/releases/latest`;
 const RELEASE_DOWNLOAD_BASE = `${REPO_URL}/releases/latest/download`;
 const UPDATER_MANIFEST_URL = `${RELEASE_DOWNLOAD_BASE}/latest.json`;
+// The nightly channel is the rolling AutoBuild pre-release, not the numbered
+// release: a fixed tag, so its manifest lives under that release's assets.
+const AUTOBUILD_DOWNLOAD_BASE = `${REPO_URL}/releases/download/AutoBuild`;
+const AUTOBUILD_NIGHTLY_MANIFEST_URL = `${AUTOBUILD_DOWNLOAD_BASE}/nightly.json`;
 
 /**
  * Public half of the key in this repository's TAURI_SIGNING_PRIVATE_KEY.
@@ -260,8 +264,15 @@ function patchAppConstants(root) {
     original.includes(SENTINEL_CONSTANTS) &&
     !original.includes('download.readest.com')
   ) {
-    log('constants.ts: already points at this project');
-    return;
+    if (original.includes(AUTOBUILD_NIGHTLY_MANIFEST_URL)) {
+      log('constants.ts: already points at this project');
+      return;
+    }
+    fail(
+      'constants.ts carries an earlier revision of the updater URLs (no AutoBuild nightly channel).\n' +
+        '  Restore the file and run this script again:\n' +
+        `    git -C ${root} checkout -- apps/readest-app/src/services/constants.ts`,
+    );
   }
 
   let text = original;
@@ -273,15 +284,13 @@ function patchAppConstants(root) {
       replacement: `${SENTINEL_CONSTANTS}\nconst LATEST_DOWNLOAD_BASE_URL = '${RELEASE_DOWNLOAD_BASE}';`,
     },
     {
-      // No separate nightly channel is published; pointing at a file that does
-      // not exist keeps a nightly-channel client on the stable manifest instead
-      // of reaching for upstream's nightly.
-      //
-      // The quote class accepts both forms: this rewrite turns the value into a
-      // template literal, so a second run has to recognise its own output.
+      // The nightly channel is this project's daily AutoBuild: a fixed tag, so
+      // the manifest lives under that release rather than under `latest`, which
+      // always points at the numbered release. The quote class accepts both
+      // forms so a second run recognises its own output.
       label: 'nightly manifest URL',
       pattern: /export const READEST_NIGHTLY_UPDATER_FILE = [`'][^`']*[`'];/,
-      replacement: `export const READEST_NIGHTLY_UPDATER_FILE = \`\${LATEST_DOWNLOAD_BASE_URL}/nightly.json\`;`,
+      replacement: `export const READEST_NIGHTLY_UPDATER_FILE = '${AUTOBUILD_NIGHTLY_MANIFEST_URL}';`,
     },
     {
       label: 'updater public key',
