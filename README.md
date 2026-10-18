@@ -30,7 +30,7 @@ One caveat on the last one. Its gate runs through the same client-side check thi
 
 ## Downloading and installing
 
-`<V>` is the upstream version, for example `0.12.16`. Each release is tagged `v<V>-unlocked`, and every asset is named `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>`:
+`<V>` is the upstream version, for example `0.12.16`. Each release is tagged `v<V>-unlocked`, and every asset is named `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>`, where `<type>` is the artifact kind (`setup`, `portable`, `updater`, and so on):
 
 | Platform | Architectures / variants | Assets |
 | --- | --- | --- |
@@ -40,9 +40,9 @@ One caveat on the last one. Its gate runs through the same client-side check thi
 | Android | replacing / coexisting, each in arm64-v8a, armeabi-v7a, x86_64, x86 | `Readest-<V>-android-<family>-<abi>.apk` and its `.sig` |
 | iOS | arm64 | `Readest-<V>-ios-arm64.ipa` (unsigned; sign it yourself) |
 
-The Windows installer and the Linux AppImage are themselves the updater artifacts, which is why they carry signatures. The Windows portable zip does not update itself: the updater downloads whatever the manifest points at and launches it as an executable, so a zip cannot be that artifact. The iOS IPA is the second exception, for a different reason: the Tauri updater has no iOS support, so there is nothing to sign and nothing to point a manifest at. Every other platform still self-updates.
+The Windows installer and the Linux AppImage double as the updater artifacts: the updater downloads those two files and verifies them, which is why they carry signatures. The macOS dmg only installs; updates come from its separate `updater.tar.gz`. The Windows portable zip does not update itself: the updater downloads whatever the manifest points at and launches it as an executable, so a zip cannot be that artifact. The iOS IPA is the second exception, for a different reason: the Tauri updater has no iOS support, so there is nothing to sign and nothing to point a manifest at. Every other platform still self-updates.
 
-Every platform ships one build per architecture — there is no macOS universal build and no universal Android APK any more. Each Android ABI is published on its own so a download can be picked that matches the device.
+Every platform ships one build per architecture — there is no macOS universal build and no universal Android APK any more. Android further splits into the replacing and coexisting families, and each ABI is published on its own so a download can be picked that matches the device.
 
 The artifacts are not signed by a code-signing certificate.
 
@@ -61,7 +61,7 @@ The artifacts are not signed by a code-signing certificate.
 
 ### The two Android families
 
-Both families install as **Readest**. The only difference is the application id.
+Both families install as **Readest**. They differ in the application id and in whether they can coexist with the official app.
 
 | Family | Application id | Behaviour |
 | --- | --- | --- |
@@ -125,9 +125,9 @@ Self-hosting has two halves: pointing the client at your own server, and running
 
 ### The Self-hosted entry in Settings
 
-Settings has a **Self-hosted** entry — **Custom → Self-hosted**, a second-level page — that mirrors the WebDAV panel. Until a server is configured it is that panel's connect form: the server URL, an optional Supabase anon key, and a filled **Connect** button. Once one is configured the page shows what the app is pointed at, with **Disconnect**.
+Settings has a **Self-hosted** entry — **Custom → Self-hosted**, a second-level page — that mirrors the WebDAV panel.
 
-**Connect** probes the address first — a `GET` of it through the app's own fetch helper, so the answer is the answer the app itself would get — and only an unreachable host or a 5xx refuses it. Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. **Disconnect** keeps both — the address stays in the form, so reconnecting is one click — and returns to the official servers. Connecting and disconnecting both reload the app, because the API base and the Supabase client are resolved once at startup; either way a toast appears first, then the app restarts.
+Connecting probes the server address first — a `GET` of it through the app's own fetch helper, so the answer is the answer the app itself would get — and only an unreachable host or a 5xx refuses it. Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. Disconnecting keeps both — the address stays put, so reconnecting is one click — and returns to the official servers. Connecting and disconnecting both reload the app, because the API base and the Supabase client are resolved once at startup; either way a toast appears first, then the app restarts.
 
 Not covered: the CDN hosts for webfonts and published covers, and the readest.com landing pages the web build links to. The desktop app reaches the former only for optional assets and copes without them.
 
@@ -143,7 +143,7 @@ Nothing here requires a Readest account. With no signed-in user the app keeps a 
 
 ## How releases are produced
 
-Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform below and published as `v<V>-unlocked`; a day without a new upstream version costs nothing but that check. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
+Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>-unlocked`; a day without a new upstream version costs nothing but that check. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
 
 Every release comes out of the same recipe: check the upstream tag out, apply the patch scripts in `tools/`, assert the patched sources, build, assert the built bundle, then read every package back before uploading it.
 
