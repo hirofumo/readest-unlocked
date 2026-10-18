@@ -88,7 +88,7 @@ Android 会发布两种包，装出来都叫 **Readest**，不同之处在应用
 | 包 | 应用 ID | 行为 |
 | --- | --- | --- |
 | 替换版 | `com.bilingify.readest` | 和官方应用同一个身份。要覆盖官方应用，或者从来没装过官方应用，就选它；之后从备份恢复的数据也会落回原来的位置。装之前必须先卸载官方应用——见下文。 |
-| 并存版 | `com.hirofumo.readest.unlocked` | 与官方应用并存安装，书库从空开始。 |
+| 并存版 | `com.hirofumo.readest.unlocked`（默认值；fork 里可用 `READEST_COEXIST_IDENTIFIER` 覆盖） | 与官方应用并存安装，书库从空开始。 |
 
 装的是哪一种包，可以在应用的「关于」对话框里看到。
 
@@ -163,6 +163,53 @@ gh attestation verify Readest-0.12.16-windows-x64-setup.exe --repo hirofumo/read
 3. **包本身。** 文件是被读出来的，不是被信任的：每个 Android APK 都解开核对应用 ID、包含的 ABI 与签名证书；iOS 的 IPA 同样核对 Bundle ID、版本号、架构、内嵌扩展，并确认它确实未签名。
 
 任何一道检查失败都会让构建失败并且不产出任何产物，所以只打了一半补丁的 release 不会被发布出去。
+
+## Fork 构建
+
+这个仓库可以直接 fork 出自己的构建：应用 ID、下载端点和清单地址都从当前仓库推导，不需要改代码；fork 之后只需要配置仓库变量和密钥。
+
+### 需要配置的变量和密钥
+
+| 名称 | 类型 | 必填 | 用途 |
+| --- | --- | --- | --- |
+| `READEST_COEXIST_IDENTIFIER` | Repository variable | 否 | 并存版的应用 ID。默认按仓库 owner 推导为 `com.<owner>.readest.unlocked`（owner 里的连字符等字符会被去掉）。要发布自己的并存版，建议显式设置，避免和原仓库或其他 fork 冲突。 |
+| `READEST_UNLOCKED_UPDATER_PUBKEY` | Repository variable | 是 | Tauri 更新器的公钥，应用用它校验更新包。不配置就会沿用原仓库的公钥，你的构建签出来的更新包会验签失败。 |
+| `TAURI_SIGNING_PRIVATE_KEY` | Secret | 是 | Tauri 更新签名私钥。 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | 是 | 上面私钥的口令。 |
+| `ANDROID_KEY_ALIAS` | Secret | 构建 Android 时必填 | Android 密钥别名。 |
+| `ANDROID_KEY_PASSWORD` | Secret | 构建 Android 时必填 | Android 密钥口令。 |
+| `ANDROID_KEY_BASE64` | Secret | 构建 Android 时必填 | 整个 keystore 的 base64。不配置时 Android 腿会被跳过，其它平台照常构建。 |
+
+替换版 Android 的应用 ID 固定为上游的 `com.bilingify.readest`——只有同一个 ID 才能覆盖安装官方版。想和官方版并存、或者想要一个自己的身份，用配置了 `READEST_COEXIST_IDENTIFIER` 的并存版。
+
+### 生成 Tauri 更新密钥
+
+在任意一台有上游 Node 依赖的机器上：
+
+```bash
+cd apps/readest-app
+pnpm tauri signer generate -w ~/.tauri/readest-unlocked.key
+```
+
+把 `~/.tauri/readest-unlocked.key.pub` 的内容填进 `READEST_UNLOCKED_UPDATER_PUBKEY`；私钥文件的内容填进 `TAURI_SIGNING_PRIVATE_KEY`，生成时设置的口令填进 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。私钥只放在 secrets 里，不要提交。
+
+### 生成 Android 密钥
+
+```bash
+keytool -genkeypair -v -keystore release.jks -alias readest -keyalg RSA -keysize 2048 -validity 10000
+# macOS / Linux
+base64 -w0 release.jks
+# PowerShell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes('release.jks'))
+```
+
+把 base64 输出填进 `ANDROID_KEY_BASE64`，别名和口令分别填进 `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`。keystore 不要提交。
+
+### 构建
+
+配置好之后，和本仓库一样走 `topic/*` → `dev` → `main`：推 `topic/<name>` 跑全矩阵 dry run，绿了合 `main`，再手动触发正式版（`-f force=true`）或 Nightly Build（`-f nightly=true`）。每日 03:00 / 04:00 UTC 的 schedule 也会自动构建。
+
+fork 不会继承原仓库的 secrets 和 variables，Actions 默认也可能没有开启——第一次推送前先在仓库设置里确认 Actions 已启用，并把上面的变量和密钥填好。iOS 产物仍是未签名 IPA，需要你自己签名；Windows 便携版不参与自动更新。
 
 ## 仓库里有什么
 

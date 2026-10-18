@@ -98,6 +98,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
       asset_prefix: ${{ steps.resolve.outputs.asset_prefix }}
+      coexist_identifier: ${{ steps.resolve.outputs.coexist_identifier }}
       manifest_version: ${{ steps.resolve.outputs.manifest_version }}
       date: ${{ steps.resolve.outputs.date }}
       short_sha: ${{ steps.resolve.outputs.short_sha }}
@@ -127,6 +128,9 @@ jobs:
           # The 04:00 schedule and an explicit `nightly` dispatch are the same
           # channel: upstream `main`, rolling `NightlyBuild` tag, pre-release.
           INPUT_NIGHTLY: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 4 * * *') || inputs.nightly == true }}
+          # Fork-friendly: the coexisting package id. Empty means "derive it
+          # from the repository owner", which resolve-upstream.mjs does.
+          COEXIST_IDENTIFIER: ${{ vars.READEST_COEXIST_IDENTIFIER }}
           # A dry run always rebuilds: the version it would build is already
           # published, and a run that skipped every leg would verify nothing.
           INPUT_FORCE: ${{ inputs.force == true || github.ref != 'refs/heads/main' }}
@@ -187,10 +191,11 @@ jobs:
           SHORT_SHA: ${{ needs.detect.outputs.short_sha }}
           UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
           REPO: ${{ github.repository }}
+          COEXIST_IDENTIFIER: ${{ needs.detect.outputs.coexist_identifier }}
         run: |
           set -euo pipefail
           args=(--mode "$MODE" --version "$VERSION" --prefix "$PREFIX" --tag "$TAG"
-                --repo "$REPO" --out release-body.md)
+                --repo "$REPO" --coexist-id "$COEXIST_IDENTIFIER" --out release-body.md)
           if [ "$MODE" = "nightly" ]; then
             args+=(--date "$DATE" --short-sha "$SHORT_SHA" --upstream-sha "$UPSTREAM_SHA")
           fi
@@ -863,6 +868,8 @@ jobs:
       # "Readest" — only the About dialog tells the two apart.
       - name: Switch to the coexisting identity
         if: matrix.family == 'coexist'
+        env:
+          READEST_COEXIST_IDENTIFIER: ${{ needs.detect.outputs.coexist_identifier }}
         run: |
           set -euo pipefail
           node .recipe/tools/coexist.mjs
@@ -872,6 +879,7 @@ jobs:
       - name: Initialize the Android project
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          READEST_COEXIST_IDENTIFIER: ${{ needs.detect.outputs.coexist_identifier }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
@@ -935,6 +943,7 @@ jobs:
         env:
           FAMILY: ${{ matrix.family }}
           VARIANT: ${{ matrix.variant }}
+          COEXIST_IDENTIFIER: ${{ needs.detect.outputs.coexist_identifier }}
         run: |
           set -euo pipefail
           apk="android-${FAMILY}-${VARIANT}.apk"
@@ -943,7 +952,7 @@ jobs:
 
           case "$FAMILY" in
             replace) want=com.bilingify.readest ;;
-            coexist) want=com.hirofumo.readest.unlocked ;;
+            coexist) want="$COEXIST_IDENTIFIER" ;;
             *) echo "::error::unknown family $FAMILY"; exit 1 ;;
           esac
 

@@ -21,10 +21,20 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const MARKER = '[readest-unlocked]';
-const IDENTIFIER = process.env['READEST_COEXIST_IDENTIFIER'] ?? 'com.hirofumo.readest.unlocked';
+const REPO =
+  process.env['READEST_UNLOCKED_REPO'] ??
+  process.env['GITHUB_REPOSITORY'] ??
+  'hirofumo/readest-unlocked';
+// Fork-friendly default: the owner in the package id, so a fork does not
+// collide with this project's coexisting package.
+const OWNER = (process.env['GITHUB_REPOSITORY_OWNER'] ?? '').trim();
+const OWNER_LABEL = OWNER.toLowerCase().replace(/[^a-z0-9]/g, '');
+const DEFAULT_IDENTIFIER = OWNER_LABEL
+  ? `com.${OWNER_LABEL}.readest.unlocked`
+  : 'com.hirofumo.readest.unlocked';
+const IDENTIFIER = process.env['READEST_COEXIST_IDENTIFIER'] ?? DEFAULT_IDENTIFIER;
 const MANIFEST_FILE = 'latest-coexist.json';
-const NIGHTLY_MANIFEST_URL =
-  'https://github.com/hirofumo/readest-unlocked/releases/download/NightlyBuild/nightly-coexist.json';
+const NIGHTLY_MANIFEST_URL = `https://github.com/${REPO}/releases/download/NightlyBuild/nightly-coexist.json`;
 
 const failures = [];
 

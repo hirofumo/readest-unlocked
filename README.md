@@ -91,7 +91,7 @@ Both families install as **Readest**. They differ in the application id and in w
 | Family | Application id | Behaviour |
 | --- | --- | --- |
 | Replacing | `com.bilingify.readest` | The same identity the official app uses. Choose it when you are replacing the official app or never had it installed; a backup restored afterwards lands in the same place. The official app has to be removed first — see below. |
-| Coexisting | `com.hirofumo.readest.unlocked` | Installs side by side with the official app, and starts with an empty library. |
+| Coexisting | `com.hirofumo.readest.unlocked` (default; override with `READEST_COEXIST_IDENTIFIER` in a fork) | Installs side by side with the official app, and starts with an empty library. |
 
 The About dialog states which of the two is installed.
 
@@ -177,6 +177,53 @@ Three checks stand between a patch and a published release, and none of them cla
 3. **The packages themselves.** Files are read, not trusted. Each Android APK has its application id, its ABIs and its signing certificate checked by unpacking it, and the iOS IPA has its bundle id, version, architecture, embedded app extensions and unsigned state checked the same way.
 
 A failed check fails the build and produces no artifacts, so a half-patched release is never published.
+
+## Building a fork
+
+This repository can be forked into a build of your own: the application id, the download endpoints and the manifest URLs are all derived from the current repository, so no code changes are needed — only repository variables and secrets.
+
+### Variables and secrets to configure
+
+| Name | Kind | Required | Purpose |
+| --- | --- | --- | --- |
+| `READEST_COEXIST_IDENTIFIER` | Repository variable | No | Application id for the coexisting Android build. Defaults to `com.<owner>.readest.unlocked`, derived from the repository owner (characters such as hyphens are dropped). Set it explicitly to publish your own coexisting build without colliding with this project or another fork. |
+| `READEST_UNLOCKED_UPDATER_PUBKEY` | Repository variable | Yes | Public half of the Tauri updater key. Without it the build keeps this project's public key and your update packages will fail signature verification. |
+| `TAURI_SIGNING_PRIVATE_KEY` | Secret | Yes | Private half of the Tauri updater key. |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | Yes | Password for that private key. |
+| `ANDROID_KEY_ALIAS` | Secret | When building Android | Android signing key alias. |
+| `ANDROID_KEY_PASSWORD` | Secret | When building Android | Android signing key password. |
+| `ANDROID_KEY_BASE64` | Secret | When building Android | The whole keystore, base64-encoded. Without it the Android legs are skipped and the other platforms still build. |
+
+The replacing Android build keeps upstream's id `com.bilingify.readest` on purpose — only that id can install over the official app. Use the coexisting build (with `READEST_COEXIST_IDENTIFIER`) to install next to it or to carry your own identity.
+
+### Generate the Tauri updater key
+
+On a machine that has the upstream Node dependencies:
+
+```bash
+cd apps/readest-app
+pnpm tauri signer generate -w ~/.tauri/readest-unlocked.key
+```
+
+Put the contents of `~/.tauri/readest-unlocked.key.pub` into `READEST_UNLOCKED_UPDATER_PUBKEY`, the private key file into `TAURI_SIGNING_PRIVATE_KEY`, and the password you chose into `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The private key belongs in secrets only.
+
+### Generate the Android key
+
+```bash
+keytool -genkeypair -v -keystore release.jks -alias readest -keyalg RSA -keysize 2048 -validity 10000
+# macOS / Linux
+base64 -w0 release.jks
+# PowerShell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes('release.jks'))
+```
+
+Put the base64 output into `ANDROID_KEY_BASE64`, and the alias and password into `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`. Do not commit the keystore.
+
+### Building
+
+After that, the flow is the same as this repository: push `topic/*` for a full-matrix dry run, merge into `dev`, then `main`, and trigger a numbered release (`-f force=true`) or a Nightly Build (`-f nightly=true`) by hand. The 03:00 / 04:00 UTC schedules also build automatically.
+
+A fork does not inherit this repository's secrets or variables, and Actions may not be enabled — check that it is before the first push, and fill in the variables and secrets above. The iOS artifact is still an unsigned IPA you sign yourself, and the Windows portable build does not update itself.
 
 ## What's in this repository
 

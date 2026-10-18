@@ -173,7 +173,20 @@ if (FORCE) {
   build = !published;
 }
 
-/* 6. Report ----------------------------------------------------------------- */
+/* 6. Coexisting Android identity -------------------------------------------- */
+
+// Fork-friendly: the coexisting family's application id defaults to the
+// repository owner, so a fork does not collide with this project's package.
+// The repository variable READEST_COEXIST_IDENTIFIER overrides it.
+const OWNER = (process.env['GITHUB_REPOSITORY_OWNER'] ?? '').trim();
+const OWNER_LABEL = OWNER.toLowerCase().replace(/[^a-z0-9]/g, '');
+const DEFAULT_COEXIST_IDENTIFIER = OWNER_LABEL
+  ? `com.${OWNER_LABEL}.readest.unlocked`
+  : 'com.hirofumo.readest.unlocked';
+const coexistIdentifier =
+  (process.env['COEXIST_IDENTIFIER'] ?? '').trim() || DEFAULT_COEXIST_IDENTIFIER;
+
+/* 7. Report ----------------------------------------------------------------- */
 
 console.log(`[resolve] mode          : ${NIGHTLY ? 'nightly' : 'release'}`);
 console.log(`[resolve] upstream ref  : ${ref}${upstreamTag ? ' (latest release)' : ''}`);
@@ -181,6 +194,7 @@ console.log(`[resolve] upstream sha  : ${upstreamSha} (${shortSha})`);
 console.log(`[resolve] version       : ${version}`);
 console.log(`[resolve] release tag   : ${tag}`);
 console.log(`[resolve] asset prefix  : ${assetPrefix}`);
+console.log(`[resolve] coexisting id : ${coexistIdentifier}`);
 console.log(`[resolve] build         : ${build}`);
 
 const outputs = {
@@ -190,6 +204,7 @@ const outputs = {
   version,
   tag,
   asset_prefix: assetPrefix,
+  coexist_identifier: coexistIdentifier,
   manifest_version: manifestVersion,
   date: NIGHTLY ? date : '',
   short_sha: shortSha,

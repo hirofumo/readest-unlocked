@@ -26,7 +26,10 @@ const MARKER = '[readest-unlocked]';
  * here so a shipped build can never be offered — and silently re-locked by — an
  * official release. Override with READEST_UNLOCKED_REPO if the repo moves.
  */
-const REPO = process.env['READEST_UNLOCKED_REPO'] ?? 'hirofumo/readest-unlocked';
+const REPO =
+  process.env['READEST_UNLOCKED_REPO'] ??
+  process.env['GITHUB_REPOSITORY'] ??
+  'hirofumo/readest-unlocked';
 const REPO_URL = `https://github.com/${REPO}`;
 /**
  * What the About dialog calls this project: the repository's own name, not the

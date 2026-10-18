@@ -64,6 +64,11 @@ if (mode === 'nightly') {
 
 // The release page is also the download page: each file name links to its own
 // asset, so picking the right file does not require scrolling to the asset list.
+const repoOwner = repo.split('/')[0] ?? '';
+const defaultCoexistId = `com.${
+  repoOwner.toLowerCase().replace(/[^a-z0-9]/g, '') || 'hirofumo'
+}.readest.unlocked`;
+const coexistId = arg('coexist-id', '') || defaultCoexistId;
 const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
 const file = (suffix) => `[${prefix}-${suffix}](${baseUrl}/${prefix}-${suffix})`;
 const shortCommit = upstreamSha ? upstreamSha.slice(0, 12) : shortSha;
@@ -130,7 +135,7 @@ const androidTable = [
   'There are two builds, and they can both be installed on the same device:',
   '',
   '- **Replacing** (`com.bilingify.readest`) — the same identity as the official app. Uninstall the official Readest first; its app-local data is cleared unless you restore it from a backup.',
-  '- **Coexisting** (`com.hirofumo.readest.unlocked`) — installs next to the official app and starts with an empty library.',
+  `- **Coexisting** (\`${coexistId}\`) — installs next to the official app and starts with an empty library.`,
   '',
   'Pick the ABI that matches the device: `arm64-v8a` for current phones and tablets, `armeabi-v7a` for older 32-bit ARM devices, and `x86_64` / `x86` for emulators and x86 hardware.',
   '',

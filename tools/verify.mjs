@@ -20,7 +20,10 @@ const SENTINEL_MARKER = `// ${MARKER} Build marker: identifiable from the shippe
 const SENTINEL_NOTICE = `{/* ${MARKER} modification notice (AGPL section 5) */}`;
 const SENTINEL_CONSTANTS = `// ${MARKER} Update endpoints and signing key are this project's.`;
 
-const REPO = process.env['READEST_UNLOCKED_REPO'] ?? 'hirofumo/readest-unlocked';
+const REPO =
+  process.env['READEST_UNLOCKED_REPO'] ??
+  process.env['GITHUB_REPOSITORY'] ??
+  'hirofumo/readest-unlocked';
 const REPO_URL = `https://github.com/${REPO}`;
 /**
  * The name the About dialog shows for this project. Derived the same way

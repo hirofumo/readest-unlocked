@@ -37,7 +37,9 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-const DEFAULT_BASE_URL = 'https://github.com/hirofumo/readest-unlocked/releases/latest/download';
+const DEFAULT_BASE_URL = `https://github.com/${
+  process.env['GITHUB_REPOSITORY'] ?? 'hirofumo/readest-unlocked'
+}/releases/latest/download`;
 
 // Platform keys mirror what upstream publishes, so a client computes the same
 // lookup key whichever build it is running.

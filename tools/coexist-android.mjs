@@ -76,7 +76,13 @@ const root = path.resolve(
   arg('root', process.env['READEST_ROOT'] ?? process.cwd()),
 );
 const from = arg('from', process.env['READEST_ANDROID_FROM'] ?? 'com.bilingify.readest');
-const to = arg('to', process.env['READEST_COEXIST_IDENTIFIER'] ?? 'com.hirofumo.readest.unlocked');
+// Keep the default in step with tools/coexist.mjs and resolve-upstream.mjs.
+const OWNER = (process.env['GITHUB_REPOSITORY_OWNER'] ?? '').trim();
+const OWNER_LABEL = OWNER.toLowerCase().replace(/[^a-z0-9]/g, '');
+const DEFAULT_IDENTIFIER = OWNER_LABEL
+  ? `com.${OWNER_LABEL}.readest.unlocked`
+  : 'com.hirofumo.readest.unlocked';
+const to = arg('to', process.env['READEST_COEXIST_IDENTIFIER'] ?? DEFAULT_IDENTIFIER);
 
 const genDir = path.join(root, 'apps', 'readest-app', 'src-tauri', 'gen', 'android');
 if (!existsSync(genDir)) {
