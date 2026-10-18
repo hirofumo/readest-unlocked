@@ -59,7 +59,10 @@ if (mode === 'autobuild') {
   }
 }
 
-const file = (suffix) => `\`${prefix}-${suffix}\``;
+// The release page is also the download page: each file name links to its own
+// asset, so picking the right file does not require scrolling to the asset list.
+const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
+const file = (suffix) => `[${prefix}-${suffix}](${baseUrl}/${prefix}-${suffix})`;
 const shortCommit = upstreamSha ? upstreamSha.slice(0, 12) : shortSha;
 
 /* ------------------------------------------------------------------ sections */

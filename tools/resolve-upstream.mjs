@@ -118,10 +118,12 @@ if (!version) {
 
 const now = new Date();
 const date = `${now.getUTCFullYear()}.${pad(now.getUTCMonth() + 1)}.${pad(now.getUTCDate())}`;
-// The updater compares versions as semver, so the autobuild manifest needs a
-// monotonic dotted version of its own: 2026.1.1, not 2026.01.01 (leading zeros
-// are illegal in semver).
-const manifestVersion = `${now.getUTCFullYear()}.${now.getUTCMonth() + 1}.${now.getUTCDate()}`;
+// The numbered release advertises the upstream version; the daily pre-release
+// advertises its date (2026.10.18 is semver-valid) so the two channels never
+// compare against each other.
+const manifestVersion = AUTOBUILD
+  ? `${now.getUTCFullYear()}.${now.getUTCMonth() + 1}.${now.getUTCDate()}`
+  : version;
 const tag = AUTOBUILD ? 'AutoBuild' : `v${version}`;
 const assetPrefix = AUTOBUILD ? `Readest-${date}-${shortSha}` : `Readest-${version}`;
 
