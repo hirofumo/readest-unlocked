@@ -193,7 +193,7 @@ const verify = [
   'For that, check the build provenance attestation:',
   '',
   '```bash',
-  `gh attestation verify ${file('windows-x64-setup.exe')} --repo ${repo}`,
+  `gh attestation verify ${prefix}-windows-x64-setup.exe --repo ${repo}`,
   '```',
   '',
   'The command succeeds only for a file produced by a workflow run in this',
