@@ -4,7 +4,7 @@ name: Build unlocked Readest
 #
 #   release    the numbered release of a new upstream version, tagged v<version>,
 #              with the signed updater manifests the app updates itself from.
-#   autobuild  a daily pre-release of upstream `main`, tagged AutoBuild and
+#   nightly  a daily pre-release of upstream `main`, tagged NightlyBuild and
 #              replaced on every build. It writes the nightly.json manifests the
 #              app's Nightly Builds channel reads, and never touches the numbered
 #              release's update path.
@@ -35,9 +35,9 @@ on:
     # Two channels share one matrix:
     #   03:00 UTC — numbered releases. Rebuilds only when upstream has a version
     #               we have not published yet, so idle days cost one `detect` job.
-    #   04:00 UTC — AutoBuild, the daily pre-release of upstream `main`. Skipped
+    #   04:00 UTC — Nightly Build, the daily pre-release of upstream `main`. Skipped
     #               when the upstream commit already sits in the rolling
-    #               `AutoBuild` release, so an unchanged tree costs one `detect`
+    #               `NightlyBuild` release, so an unchanged tree costs one `detect`
     #               job. The one-hour gap keeps the two runs from overlapping.
     - cron: '0 3 * * *'
     - cron: '0 4 * * *'
@@ -51,16 +51,16 @@ on:
         description: 'Rebuild even when a release for this version already exists'
         type: boolean
         default: false
-      autobuild:
-        description: 'Build the daily AutoBuild pre-release from upstream main instead of the latest release tag'
+      nightly:
+        description: 'Build the daily Nightly Build pre-release from upstream main instead of the latest release tag'
         type: boolean
         default: false
 
 permissions:
   contents: read
 
-# One publishing group for main, so the daily release check, the daily AutoBuild
-# and a manual run never write the same release at once. The 04:00 AutoBuild
+# One publishing group for main, so the daily release check, the daily Nightly Build
+# and a manual run never write the same release at once. The 04:00 Nightly Build
 # therefore waits for the 03:00 release run instead of overlapping it. A
 # `topic/**` push gets its own group and cancels its older run: it writes
 # nothing, and the only thing a queue of superseded dry runs costs is runners.
@@ -124,9 +124,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_REF: ${{ inputs.ref }}
-          # The 04:00 schedule and an explicit `autobuild` dispatch are the same
-          # channel: upstream `main`, rolling `AutoBuild` tag, pre-release.
-          INPUT_AUTOBUILD: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 4 * * *') || inputs.autobuild == true }}
+          # The 04:00 schedule and an explicit `nightly` dispatch are the same
+          # channel: upstream `main`, rolling `NightlyBuild` tag, pre-release.
+          INPUT_NIGHTLY: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 4 * * *') || inputs.nightly == true }}
           # A dry run always rebuilds: the version it would build is already
           # published, and a run that skipped every leg would verify nothing.
           INPUT_FORCE: ${{ inputs.force == true || github.ref != 'refs/heads/main' }}
@@ -210,7 +210,7 @@ jobs:
           set -euo pipefail
           args=(--mode "$MODE" --version "$VERSION" --prefix "$PREFIX" --tag "$TAG"
                 --repo "$REPO" --out release-body.md)
-          if [ "$MODE" = "autobuild" ]; then
+          if [ "$MODE" = "nightly" ]; then
             args+=(--date "$DATE" --short-sha "$SHORT_SHA" --upstream-sha "$UPSTREAM_SHA")
           fi
           node tools/release-notes.mjs "${args[@]}"
@@ -228,7 +228,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$MODE" = "autobuild" ]; then
+          if [ "$MODE" = "nightly" ]; then
             if gh release view "$TAG" >/dev/null 2>&1; then
               # Replaced wholesale: the asset names carry the build date and the
               # upstream commit, so a new build would otherwise leave the
@@ -238,12 +238,12 @@ jobs:
                   gh release delete-asset "$TAG" "$name" --yes
                 done
               gh release edit "$TAG" \
-                --title "Readest AutoBuild" \
+                --title "Readest Nightly Build" \
                 --notes-file release-body.md \
                 --prerelease
             else
               gh release create "$TAG" \
-                --title "Readest AutoBuild" \
+                --title "Readest Nightly Build" \
                 --notes-file release-body.md \
                 --prerelease \
                 --target "$GITHUB_SHA"
@@ -1332,7 +1332,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # The app updates itself from these manifests, so they are assembled only once
   # every leg has uploaded its signatures. The numbered release writes
-  # latest.json; the AutoBuild pre-release writes nightly.json, which the app's
+  # latest.json; the Nightly Build pre-release writes nightly.json, which the app's
   # Nightly Builds channel reads. A manifest missing a platform key means that
   # platform is simply not offered an update, which the run summary reports.
   # ---------------------------------------------------------------------------
@@ -1408,11 +1408,11 @@ jobs:
           MANIFEST_VERSION: ${{ needs.detect.outputs.manifest_version }}
           PREFIX: ${{ needs.detect.outputs.asset_prefix }}
           # A manifest entry is a URL the updater downloads, so the pre-release
-          # entries must resolve inside the AutoBuild release, not latest.
+          # entries must resolve inside the NightlyBuild release, not latest.
           AUTO_BASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ needs.detect.outputs.tag }}
         run: |
           set -euo pipefail
-          if [ "$MODE" = "autobuild" ]; then
+          if [ "$MODE" = "nightly" ]; then
             # `nightly` is the key set the app's Nightly Builds channel looks up;
             # the manifest names are the ones that channel downloads.
             node tools/make-manifest.mjs --dir sigs --version "$MANIFEST_VERSION" \
@@ -1438,8 +1438,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$MODE" = "autobuild" ]; then
-            # The nightly channel reads these two files from the AutoBuild
+          if [ "$MODE" = "nightly" ]; then
+            # The nightly channel reads these two files from the Nightly Build
             # release; the numbered release's latest.json is never touched here.
             gh release upload "$TAG" nightly.json nightly-coexist.json --clobber
             exit 0
@@ -1550,8 +1550,8 @@ jobs:
             echo "## Result"
             echo ""
             if [ "$BUILD" != "true" ]; then
-              if [ "$MODE" = "autobuild" ]; then
-                echo "AutoBuild already carries the current upstream \`main\`; nothing was built."
+              if [ "$MODE" = "nightly" ]; then
+                echo "Nightly Build already carries the current upstream \`main\`; nothing was built."
               else
                 echo "Upstream has not published a new version since the last release; nothing was built."
               fi

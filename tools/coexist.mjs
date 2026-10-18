@@ -24,7 +24,7 @@ const MARKER = '[readest-unlocked]';
 const IDENTIFIER = process.env['READEST_COEXIST_IDENTIFIER'] ?? 'com.hirofumo.readest.unlocked';
 const MANIFEST_FILE = 'latest-coexist.json';
 const NIGHTLY_MANIFEST_URL =
-  'https://github.com/hirofumo/readest-unlocked/releases/download/AutoBuild/nightly-coexist.json';
+  'https://github.com/hirofumo/readest-unlocked/releases/download/NightlyBuild/nightly-coexist.json';
 
 const failures = [];
 
@@ -106,7 +106,7 @@ const constantsFile = path.join(root, 'apps', 'readest-app', 'src', 'services', 
     },
     {
       label: 'READEST_NIGHTLY_UPDATER_FILE',
-      // unlock.mjs writes a fixed AutoBuild URL; accept any single-quoted or
+      // unlock.mjs writes a fixed Nightly Build URL; accept any single-quoted or
       // template-literal shape so an older tree is repaired rather than
       // silently left pointing at the stable manifest.
       pattern: /export const READEST_NIGHTLY_UPDATER_FILE = [`'][^`']*[`'];/,

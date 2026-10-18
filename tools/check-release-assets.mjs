@@ -18,8 +18,8 @@
  *
  *   release    assets `Readest-<version>-...`, plus latest.json,
  *              latest-coexist.json and release-notes.json
- *   autobuild  assets `Readest-<date>-<sha>-...`, plus latest-autobuild.json
- *              and latest-autobuild-coexist.json — the daily pre-release never
+ *   nightly  assets `Readest-<date>-<sha>-...`, plus nightly.json
+ *              and nightly-coexist.json — the daily pre-release never
  *              publishes the updated manifests the app actually follows
  *
  * Unexpected assets are fatal. Missing ones are only reported: a leg that failed
@@ -28,7 +28,7 @@
  *
  * Usage:
  *   node tools/check-release-assets.mjs --repo <owner/repo> --tag <tag> \
- *        --version <v> [--mode release|autobuild] [--prefix <asset prefix>]
+ *        --version <v> [--mode release|nightly] [--prefix <asset prefix>]
  *
  * Reads GH_TOKEN / GITHUB_TOKEN when present to raise the rate limit.
  */
@@ -95,7 +95,7 @@ function contract({ mode, prefix }) {
 
   // The release's own documents, written by the pipeline rather than by a leg.
   add('SHA256SUMS', 'unlock.patch', 'BUILD.md');
-  if (mode === 'autobuild') {
+  if (mode === 'nightly') {
     add('nightly.json', 'nightly-coexist.json');
   } else {
     add('latest.json', 'latest-coexist.json', 'release-notes.json');
@@ -115,12 +115,12 @@ async function main() {
 
   if (!repo) fail('--repo is required (owner/repo)');
   if (!tag) fail('--tag is required');
-  if (mode !== 'release' && mode !== 'autobuild') {
-    fail(`--mode must be "release" or "autobuild", got "${mode}"`);
+  if (mode !== 'release' && mode !== 'nightly') {
+    fail(`--mode must be "release" or "nightly", got "${mode}"`);
   }
   if (!prefix) fail('--prefix is empty');
-  if (mode === 'autobuild' && !arg('prefix', '')) {
-    fail('--prefix is required with --mode autobuild');
+  if (mode === 'nightly' && !arg('prefix', '')) {
+    fail('--prefix is required with --mode nightly');
   }
 
   const expected = contract({ mode, prefix });

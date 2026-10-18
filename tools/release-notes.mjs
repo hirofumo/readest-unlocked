@@ -7,16 +7,16 @@
  * release page is opened to answer. The channels differ only in what they are:
  *
  *   release    the numbered release, `v<version>`, with in-app updates
- *   autobuild  the daily pre-release of upstream `main`, on the rolling
- *              `AutoBuild` tag, replaced on every build and never published to
+ *   nightly  the daily pre-release of upstream `main`, on the rolling
+ *              `NightlyBuild` tag, replaced on every build and never published to
  *              the updater's `latest.json`
  *
  * Usage:
  *   node tools/release-notes.mjs --mode release --version 0.12.16 \
  *     --prefix Readest-0.12.16 --tag v0.12.16 --repo owner/repo --out notes.md
  *
- *   node tools/release-notes.mjs --mode autobuild --version 0.12.16 \
- *     --prefix Readest-2026.01.01-4aa4d9d --tag AutoBuild --repo owner/repo \
+ *   node tools/release-notes.mjs --mode nightly --version 0.12.16 \
+ *     --prefix Readest-2026.01.01-4aa4d9d --tag NightlyBuild --repo owner/repo \
  *     --date 2026.01.01 --short-sha 4aa4d9d --upstream-sha <40-char sha> \
  *     --out notes.md
  */
@@ -47,15 +47,15 @@ const shortSha = arg('short-sha');
 const upstreamSha = arg('upstream-sha');
 const outFile = path.resolve(arg('out', 'release-body.md'));
 
-if (mode !== 'release' && mode !== 'autobuild') {
-  fail(`--mode must be "release" or "autobuild", got "${mode}"`);
+if (mode !== 'release' && mode !== 'nightly') {
+  fail(`--mode must be "release" or "nightly", got "${mode}"`);
 }
 for (const [name, value] of Object.entries({ version, prefix, tag, repo })) {
   if (!value) fail(`--${name} is required`);
 }
-if (mode === 'autobuild') {
+if (mode === 'nightly') {
   for (const [name, value] of Object.entries({ date, 'short-sha': shortSha, 'upstream-sha': upstreamSha })) {
-    if (!value) fail(`--${name} is required for --mode autobuild`);
+    if (!value) fail(`--${name} is required for --mode nightly`);
   }
 }
 
@@ -68,13 +68,13 @@ const shortCommit = upstreamSha ? upstreamSha.slice(0, 12) : shortSha;
 /* ------------------------------------------------------------------ sections */
 
 const intro =
-  mode === 'autobuild'
+  mode === 'nightly'
     ? [
         `**Pre-release** — built from upstream \`main\` at [\`${shortCommit}\`]` +
           `(https://github.com/readest/readest/commit/${upstreamSha}) on ${date}.`,
         '',
         'This is the daily, rolling build of the next Readest tree. It is replaced',
-        'by the next AutoBuild and may be unstable. Turn on **Settings → Control →',
+        'by the next Nightly Build and may be unstable. Turn on **Settings → Control →',
         'Nightly Builds** to receive these builds through the in-app updater;',
         'otherwise download a new build here. Windows portable builds do not update',
         'in place.',
@@ -208,7 +208,7 @@ const verify = [
 const about = [
   '## About this build',
   '',
-  mode === 'autobuild'
+  mode === 'nightly'
     ? 'This pre-release is upstream Readest `main` plus the patch scripts in this' +
       ' repository. The complete diff ships as `unlock.patch`, and `BUILD.md` records' +
       ' the exact upstream and recipe commits. It is rebuilt daily from upstream' +

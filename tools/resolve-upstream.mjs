@@ -5,7 +5,7 @@
  * Called from the `detect` job. Reads its inputs from the environment so the
  * workflow does not have to inline any API plumbing:
  *
- *   INPUT_AUTOBUILD    "true" resolves upstream `main` for the daily pre-release
+ *   INPUT_NIGHTLY    "true" resolves upstream `main` for the daily pre-release
  *   INPUT_REF          workflow_dispatch ref override (tag, branch or sha)
  *   INPUT_FORCE        "true" rebuilds even when the build already exists
  *   GH_TOKEN           optional; raises the GitHub API rate limit
@@ -15,9 +15,9 @@
  *
  *   release   — tag `v<version>`, assets `Readest-<version>-...`. This is the
  *               numbered release, and it is the build the in-app updater follows.
- *   autobuild — tag `AutoBuild`, assets `Readest-<date>-<short sha>-...`, marked
+ *   nightly — tag `Nightly Build`, assets `Readest-<date>-<short sha>-...`, marked
  *               as a pre-release. It is built from upstream `main` every day and
- *               publishes its own `latest-autobuild*.json`, never `latest.json`.
+ *               publishes its own `nightly.json`, never `latest.json`.
  *
  * The upstream commit is resolved once, here, and every job checks that exact
  * SHA out — so the short hash in the asset names, the provenance file and the
@@ -31,7 +31,7 @@ const UPSTREAM = process.env['UPSTREAM_REPO'] ?? 'readest/readest';
 const SELF = process.env['GITHUB_REPOSITORY'] ?? '';
 const TOKEN = process.env['GH_TOKEN'] ?? process.env['GITHUB_TOKEN'] ?? '';
 const INPUT_REF = (process.env['INPUT_REF'] ?? '').trim();
-const AUTOBUILD = ['true', '1', 'yes'].includes((process.env['INPUT_AUTOBUILD'] ?? '').toLowerCase());
+const NIGHTLY = ['true', '1', 'yes'].includes((process.env['INPUT_NIGHTLY'] ?? '').toLowerCase());
 const FORCE = ['true', '1', 'yes'].includes((process.env['INPUT_FORCE'] ?? '').toLowerCase());
 
 const headers = {
@@ -60,7 +60,7 @@ let upstreamTag = '';
 let ref = INPUT_REF;
 
 if (!ref) {
-  if (AUTOBUILD) {
+  if (NIGHTLY) {
     ref = 'main';
   } else {
     const res = await get(`https://api.github.com/repos/${UPSTREAM}/releases/latest`);
@@ -121,9 +121,9 @@ const date = `${now.getUTCFullYear()}.${pad(now.getUTCMonth() + 1)}.${pad(now.ge
 // A nightly version is `<base>-<YYYYMMDDHH>`: the app's comparator treats a
 // nightly on the same base as newer than the numbered release it follows.
 const stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}${pad(now.getUTCHours())}`;
-const manifestVersion = AUTOBUILD ? `${version}-${stamp}` : version;
-const tag = AUTOBUILD ? 'AutoBuild' : `v${version}`;
-const assetPrefix = AUTOBUILD ? `Readest-${date}-${shortSha}` : `Readest-${version}`;
+const manifestVersion = NIGHTLY ? `${version}-${stamp}` : version;
+const tag = NIGHTLY ? 'NightlyBuild' : `v${version}`;
+const assetPrefix = NIGHTLY ? `Readest-${date}-${shortSha}` : `Readest-${version}`;
 
 /* 5. Is it already built? --------------------------------------------------- */
 
@@ -132,7 +132,7 @@ if (FORCE) {
   console.log('[resolve] force requested: rebuilding regardless of existing releases');
 } else if (!SELF) {
   console.log('[resolve] GITHUB_REPOSITORY is unset: assuming a rebuild is needed');
-} else if (AUTOBUILD) {
+} else if (NIGHTLY) {
   // The rolling pre-release keeps only the latest build. Its assets are the
   // only record of which upstream commit is current, so the commit itself is
   // the "already built" test: any `Readest-<date>-<sha>-...` asset means this
@@ -175,7 +175,7 @@ if (FORCE) {
 
 /* 6. Report ----------------------------------------------------------------- */
 
-console.log(`[resolve] mode          : ${AUTOBUILD ? 'autobuild' : 'release'}`);
+console.log(`[resolve] mode          : ${NIGHTLY ? 'nightly' : 'release'}`);
 console.log(`[resolve] upstream ref  : ${ref}${upstreamTag ? ' (latest release)' : ''}`);
 console.log(`[resolve] upstream sha  : ${upstreamSha} (${shortSha})`);
 console.log(`[resolve] version       : ${version}`);
@@ -185,16 +185,16 @@ console.log(`[resolve] build         : ${build}`);
 
 const outputs = {
   build: String(build),
-  mode: AUTOBUILD ? 'autobuild' : 'release',
+  mode: NIGHTLY ? 'nightly' : 'release',
   ref,
   version,
   tag,
   asset_prefix: assetPrefix,
   manifest_version: manifestVersion,
-  date: AUTOBUILD ? date : '',
+  date: NIGHTLY ? date : '',
   short_sha: shortSha,
   upstream_sha: upstreamSha,
-  prerelease: String(AUTOBUILD),
+  prerelease: String(NIGHTLY),
   upstream_tag: upstreamTag,
 };
 const outputFile = process.env['GITHUB_OUTPUT'];

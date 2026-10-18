@@ -31,8 +31,8 @@ const REPO_NAME = REPO.split('/').pop() ?? REPO;
 const RELEASES_URL = `${REPO_URL}/releases/latest`;
 const RELEASE_DOWNLOAD_BASE = `${REPO_URL}/releases/latest/download`;
 const UPDATER_MANIFEST_URL = `${RELEASE_DOWNLOAD_BASE}/latest.json`;
-const AUTOBUILD_DOWNLOAD_BASE = `${REPO_URL}/releases/download/AutoBuild`;
-const AUTOBUILD_NIGHTLY_MANIFEST_URL = `${AUTOBUILD_DOWNLOAD_BASE}/nightly.json`;
+const NIGHTLY_DOWNLOAD_BASE = `${REPO_URL}/releases/download/NightlyBuild`;
+const NIGHTLY_MANIFEST_URL = `${NIGHTLY_DOWNLOAD_BASE}/nightly.json`;
 // Same source as unlock.mjs reads, so a key rotation moves both at once
 // instead of silently disagreeing about which key was compiled in. `||` and not
 // `??`: an unset GitHub variable arrives as an empty string.
@@ -194,16 +194,16 @@ if (constants === null) {
       fail(`${name} is not derived from LATEST_DOWNLOAD_BASE_URL; it could point at another host`);
     }
   }
-  // The nightly channel is the rolling AutoBuild release, not the numbered
+  // The nightly channel is the rolling Nightly Build release, not the numbered
   // one: a fixed URL, because `latest` never points at a pre-release.
   if (
     normalized.includes(
-      `export const READEST_NIGHTLY_UPDATER_FILE = '${AUTOBUILD_NIGHTLY_MANIFEST_URL}';`,
+      `export const READEST_NIGHTLY_UPDATER_FILE = '${NIGHTLY_MANIFEST_URL}';`,
     )
   ) {
-    ok('the nightly channel points at the AutoBuild pre-release');
+    ok('the nightly channel points at the Nightly Build pre-release');
   } else {
-    fail('READEST_NIGHTLY_UPDATER_FILE does not point at the AutoBuild nightly manifest');
+    fail('READEST_NIGHTLY_UPDATER_FILE does not point at the Nightly Build nightly manifest');
   }
 }
 

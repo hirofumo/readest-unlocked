@@ -9,15 +9,15 @@
  *
  * The manifest's `version` and the asset prefix are separate arguments: the
  * numbered release has both as `Readest-<version>-...`, while the daily
- * AutoBuild publishes `Readest-<date>-<sha>-...` assets under a nightly version
+ * Nightly Build publishes `Readest-<date>-<sha>-...` assets under a nightly version
  * (`<version>-<YYYYMMDDHH>`). `--channel nightly` writes the platform keys the
- * app's Nightly Builds channel looks up; that channel is the rolling AutoBuild.
+ * app's Nightly Builds channel looks up; that channel is the rolling Nightly Build.
  *
  * Two manifests are produced for each channel:
  *   latest.json               desktop + the Android family that replaces the official app
  *   latest-coexist.json       the Android family that installs alongside it
- *   latest-autobuild.json     the same two shapes for the daily pre-release
- *   latest-autobuild-coexist.json
+ *   nightly.json     the same two shapes for the daily pre-release
+ *   nightly-coexist.json
  *
  * The two Android families must stay separate in every channel: they have
  * different application ids, so offering one family's APK to the other would

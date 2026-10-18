@@ -84,10 +84,10 @@ What the resulting install can do depends on the account you sign with. App Grou
 
 **None of this has been verified on a device from CI.** What the build proves is that the package is structurally correct — see [How a release is verified](#how-a-release-is-verified) — not that it installs or runs. Treat the first device install as your own test.
 
-### The daily AutoBuild
+### The daily Nightly Build
 
 Besides the numbered releases, this repository builds a pre-release from upstream
-`main` once a day and publishes it to a single rolling `AutoBuild` release. Its
+`main` once a day and publishes it to a single rolling `NightlyBuild` release. Its
 file names carry the build date and the upstream commit:
 
 ```
@@ -95,9 +95,9 @@ Readest-2026.10.18-767f834-android-coexist-arm64-v8a.apk
 ```
 
 - The naming rule is `Readest-<date>-<upstream short sha>-<platform>-<arch or variant>-<type>`, where the date looks like `2026.10.18`; the rest matches the numbered release.
-- Every build replaces the previous one: the `AutoBuild` page only ever holds the latest build, and old files are not kept.
+- Every build replaces the previous one: the `NightlyBuild` page only ever holds the latest build, and old files are not kept.
 - It is a pre-release and may be unstable. Use the numbered release (tag `v<V>`) for everyday reading.
-- With **Settings → Control → Nightly Builds** enabled, the app checks `nightly.json` and installs new AutoBuilds automatically. Windows portable builds are not in this channel and still need a manual download. The numbered release's `latest.json` / `latest-coexist.json` are unaffected.
+- With **Settings → Control → Nightly Builds** enabled, the app checks `nightly.json` and installs new Nightly Builds automatically. Windows portable builds are not in this channel and still need a manual download. The numbered release's `latest.json` / `latest-coexist.json` are unaffected.
 - A day without a new upstream `main` commit costs one version resolution, not a build.
 
 ## Verifying a download
@@ -159,7 +159,7 @@ Nothing here requires a Readest account. With no signed-in user the app keeps a 
 
 ## How releases are produced
 
-Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>`; a day without a new upstream version costs nothing but that check. A separate daily AutoBuild (see [The daily AutoBuild](#the-daily-autobuild)) builds a pre-release from upstream `main`. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
+Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>`; a day without a new upstream version costs nothing but that check. A separate daily Nightly Build (see [The daily Nightly Build](#the-daily-nightly-build)) builds a pre-release from upstream `main`. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
 
 Every release comes out of the same recipe: check the upstream tag out, apply the patch scripts in `tools/`, assert the patched sources, build, assert the built bundle, then read every package back before uploading it.
 
