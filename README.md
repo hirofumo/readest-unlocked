@@ -6,9 +6,11 @@ An automatically built **unlocked** build of [Readest](https://github.com/reades
 
 This repository is a build recipe, not a source tree and not a fork. It contains no upstream code: every release is built from an exact upstream tag plus the patch scripts in `tools/`, and the complete diff against that tag ships with the release as `unlock.patch` — so what changed is always readable, and never taken on trust.
 
-## Unlocked client features
+## Client features
 
-All five features run through the same client-side entitlement check. These builds force that check open, so the features are available to every account — including a signed-out free one.
+### Unlocked
+
+The first five features run through the same client-side entitlement check. These builds force that check open, so the features are available to every account — including a signed-out free one.
 
 | Feature | What it means in the app |
 | --- | --- |
@@ -17,8 +19,11 @@ All five features run through the same client-side entitlement check. These buil
 | Audiobookshelf offline downloads | Audiobookshelf books and audiobooks can be stored on the device for offline use. |
 | Trusted-device pairing | Nearby BookDrop transfers no longer ask for confirmation for each individual transfer. |
 | Custom translators | Translation through your own OpenAI-compatible endpoint or your own DeepL key. |
+| Self-hosted server | A new **Self-hosted** entry (Settings → Custom → Self-hosted) points the app at your own Readest server. This one is an added entry, not part of the entitlement check above. |
 
-## What is not unlocked
+No account is needed for any of this: with no signed-in user the app keeps a local library, and syncing can go to WebDAV or an S3-compatible bucket — both are third-party sync.
+
+### Not unlocked
 
 The service decides these server-side, from the account token. A client build cannot change that, and this project does not claim otherwise:
 
@@ -27,6 +32,26 @@ The service decides these server-side, from the account token. A client build ca
 - the Send-to-Readest personal email address
 
 One caveat on the last one. Its gate runs through the same client-side check this build opens, so the client half of that gate opens along with everything else: the Send-to-Readest panel asks the official server for an address and reports a load failure for an account the server refuses, where an unpatched build showed the upgrade card instead. The capability itself stays server-decided.
+
+The account backend is only needed for Readest Cloud, the Send-to-Readest address and shared annotations.
+
+## Self-hosting
+
+Self-hosting has two halves: pointing the client at your own server, and running that server yourself.
+
+### Client setup
+
+Settings has a **Self-hosted** entry — **Custom → Self-hosted**, a second-level page — that mirrors the WebDAV panel.
+
+Connecting probes the server address first — a `GET` of it through the app's own fetch helper, so the answer is the answer the app itself would get — and only an unreachable host or a 5xx refuses it. Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. Disconnecting keeps both — the address stays put, so reconnecting is one click — and returns to the official servers. Connecting and disconnecting both reload the app, because the API base and the Supabase client are resolved once at startup; either way a toast appears first, then the app restarts.
+
+Not covered: the CDN hosts for webfonts and published covers, and the readest.com landing pages the web build links to. The desktop app reaches the former only for optional assets and copes without them.
+
+### Server setup
+
+The server side is upstream's: [readest/docker](https://github.com/readest/readest/tree/main/docker) ships a `compose.yaml` that brings up the app, the API and a Supabase stack, and its README documents the environment variables.
+
+Worth knowing before you pick a build: `SELF_HOSTED=true` is **upstream's own** switch for this case, and their published image sets it by default — upstream unlocks the premium client features for a self-hosted deployment, signed in or not. This project applies the same rule to the desktop, Android and iOS builds, which upstream does not publish; it does not invent a different one.
 
 ## Downloading and installing
 
@@ -135,28 +160,6 @@ The app updates itself from this repository's releases, not from readest.com.
 
 Each release publishes a signed updater manifest — `latest.json` for the replacing Android family and the desktop builds, `latest-coexist.json` for the coexisting Android family — together with the `.sig` files the Tauri updater verifies against a public key compiled into the app. The Windows portable zip and the iOS IPA are the exceptions described above and do not update themselves. The private signing key is held only in this repository's secrets and never ships in a build. Keep that private key and its password: because the matching public key is compiled into the app, losing them means no future release can be signed and already-installed apps will stop accepting updates.
 
-## Self-hosting
-
-Self-hosting has two halves: pointing the client at your own server, and running that server yourself.
-
-### The Self-hosted entry in Settings
-
-Settings has a **Self-hosted** entry — **Custom → Self-hosted**, a second-level page — that mirrors the WebDAV panel.
-
-Connecting probes the server address first — a `GET` of it through the app's own fetch helper, so the answer is the answer the app itself would get — and only an unreachable host or a 5xx refuses it. Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. Disconnecting keeps both — the address stays put, so reconnecting is one click — and returns to the official servers. Connecting and disconnecting both reload the app, because the API base and the Supabase client are resolved once at startup; either way a toast appears first, then the app restarts.
-
-Not covered: the CDN hosts for webfonts and published covers, and the readest.com landing pages the web build links to. The desktop app reaches the former only for optional assets and copes without them.
-
-### Running your own server
-
-The server side is upstream's: [readest/docker](https://github.com/readest/readest/tree/main/docker) ships a `compose.yaml` that brings up the app, the API and a Supabase stack, and its README documents the environment variables.
-
-Worth knowing before you pick a build: `SELF_HOSTED=true` is **upstream's own** switch for this case, and their published image sets it by default — upstream unlocks the premium client features for a self-hosted deployment, signed in or not. This project applies the same rule to the desktop, Android and iOS builds, which upstream does not publish; it does not invent a different one.
-
-### Using it without an account at all
-
-Nothing here requires a Readest account. With no signed-in user the app keeps a local library, and syncing can go to WebDAV or an S3-compatible bucket — both are third-party sync, so both are unlocked in this build. The account backend is only needed for Readest Cloud, the Send-to-Readest address and shared annotations.
-
 ## How releases are produced
 
 Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>`; a day without a new upstream version costs nothing but that check. A separate daily Nightly Build (see [The daily Nightly Build](#the-daily-nightly-build)) builds a pre-release from upstream `main`. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
@@ -175,20 +178,6 @@ Three checks stand between a patch and a published release, and none of them cla
 
 A failed check fails the build and produces no artifacts, so a half-patched release is never published.
 
-## License and compliance
-
-Readest is licensed under **AGPL-3.0**, and so are this repository's scripts and the binaries published here. The full license text is in [LICENSE](LICENSE).
-
-The AGPL asks anyone distributing a modified version to provide the Corresponding Source and to carry prominent notices that files were changed. This repository is that source: it holds the complete set of patch scripts and the exact build recipe. Every file the patches touch is marked in place with a `[readest-unlocked]` comment naming the change, except the three that are JSON and cannot hold one — `tauri.conf.json` and the two locale files. The About dialog carries the notice for those.
-
-The published binaries keep upstream's copyright notices, license text and project identity. Nothing here removes or replaces them.
-
-This project is not affiliated with, endorsed by or supported by Readest or Bilingify LLC. "Readest" and its logo belong to their owners and are used here only to describe what this build is derived from. Support for this build comes from this repository, not from upstream.
-
-If this build is useful to you, upstream is the thing worth supporting: Readest is an actively developed reader with real infrastructure behind it, and its plans are what pay for that. Nothing here changes the deal for anyone using readest.com — the unlock applies only to builds from this repository, and the same features are already free to anyone running their own server. Bugs in reading, syncing or the reader UI belong in [upstream's tracker](https://github.com/readest/readest/issues); a problem with these builds themselves — a download that misbehaves, a release that failed — belongs here.
-
-These builds are provided as-is, with no warranty, for personal use. You are responsible for complying with the licenses and terms of any third-party service the app talks to.
-
 ## What's in this repository
 
 ```
@@ -202,3 +191,17 @@ The patch scripts are the Corresponding Source for the binaries published here.
 They are plain Node.js files with no build step of their own, and every change
 they make to an upstream file is marked in place, so the recipe can be read
 top to bottom without running anything.
+
+## License and compliance
+
+Readest is licensed under **AGPL-3.0**, and so are this repository's scripts and the binaries published here. The full license text is in [LICENSE](LICENSE).
+
+The AGPL asks anyone distributing a modified version to provide the Corresponding Source and to carry prominent notices that files were changed. This repository is that source: it holds the complete set of patch scripts and the exact build recipe. Every file the patches touch is marked in place with a `[readest-unlocked]` comment naming the change, except the three that are JSON and cannot hold one — `tauri.conf.json` and the two locale files. The About dialog carries the notice for those.
+
+The published binaries keep upstream's copyright notices, license text and project identity. Nothing here removes or replaces them.
+
+This project is not affiliated with, endorsed by or supported by Readest or Bilingify LLC. "Readest" and its logo belong to their owners and are used here only to describe what this build is derived from. Support for this build comes from this repository, not from upstream.
+
+If this build is useful to you, upstream is the thing worth supporting: Readest is an actively developed reader with real infrastructure behind it, and its plans are what pay for that. Nothing here changes the deal for anyone using readest.com — the unlock applies only to builds from this repository, and the same features are already free to anyone running their own server. Bugs in reading, syncing or the reader UI belong in [upstream's tracker](https://github.com/readest/readest/issues); a problem with these builds themselves — a download that misbehaves, a release that failed — belongs here.
+
+These builds are provided as-is, with no warranty, for personal use. You are responsible for complying with the licenses and terms of any third-party service the app talks to.
