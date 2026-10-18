@@ -30,7 +30,7 @@ One caveat on the last one. Its gate runs through the same client-side check thi
 
 ## Downloading and installing
 
-`<V>` is the upstream version, for example `0.12.16`. Each release is tagged `v<V>-unlocked`, and every asset is named `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>`, where `<type>` is the artifact kind (`setup`, `portable`, `updater`, and so on):
+`<V>` is the upstream version, for example `0.12.16`. The numbered release is tagged `v<V>`, and every asset is named `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>`, where `<type>` is the artifact kind (`setup`, `portable`, `updater`, and so on):
 
 | Platform | Architectures / variants | Assets |
 | --- | --- | --- |
@@ -84,6 +84,22 @@ What the resulting install can do depends on the account you sign with. App Grou
 
 **None of this has been verified on a device from CI.** What the build proves is that the package is structurally correct — see [How a release is verified](#how-a-release-is-verified) — not that it installs or runs. Treat the first device install as your own test.
 
+### The daily AutoBuild
+
+Besides the numbered releases, this repository builds a pre-release from upstream
+`main` once a day and publishes it to a single rolling `AutoBuild` release. Its
+file names carry the build date and the upstream commit:
+
+```
+Readest-2026.10.18-767f834-android-coexist-arm64-v8a.apk
+```
+
+- The naming rule is `Readest-<date>-<upstream short sha>-<platform>-<arch or variant>-<type>`, where the date looks like `2026.10.18`; the rest matches the numbered release.
+- Every build replaces the previous one: the `AutoBuild` page only ever holds the latest build, and old files are not kept.
+- It is a pre-release and may be unstable. Use the numbered release (tag `v<V>`) for everyday reading.
+- It **does not take part in in-app updates**. `AutoBuild` publishes only `latest-autobuild.json` and `latest-autobuild-coexist.json`, which the app does not read today; upgrade by downloading the new build. The numbered release's `latest.json` / `latest-coexist.json` are unaffected.
+- A day without a new upstream `main` commit costs one version resolution, not a build.
+
 ## Verifying a download
 
 Two independent things can be checked, and they answer different questions.
@@ -92,7 +108,7 @@ Two independent things can be checked, and they answer different questions.
 `shasum` format, so standard tooling reads it:
 
 ```bash
-gh release download v0.12.16-unlocked --repo hirofumo/readest-unlocked --pattern SHA256SUMS
+gh release download v0.12.16 --repo hirofumo/readest-unlocked --pattern SHA256SUMS
 # download the one artifact you care about, then:
 sha256sum -c SHA256SUMS --ignore-missing      # or: shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
@@ -143,7 +159,7 @@ Nothing here requires a Readest account. With no signed-in user the app keeps a 
 
 ## How releases are produced
 
-Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>-unlocked`; a day without a new upstream version costs nothing but that check. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
+Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>`; a day without a new upstream version costs nothing but that check. A separate daily AutoBuild (see [The daily AutoBuild](#the-daily-autobuild)) builds a pre-release from upstream `main`. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
 
 Every release comes out of the same recipe: check the upstream tag out, apply the patch scripts in `tools/`, assert the patched sources, build, assert the built bundle, then read every package back before uploading it.
 

@@ -7,15 +7,25 @@
  * file next to the artifact it signed, so this script only has to pair them and
  * name the platform keys.
  *
- * Two manifests are produced from the same release:
- *   latest.json         desktop + the Android family that replaces the official app
- *   latest-coexist.json the Android family that installs alongside it
- * They must stay separate: the two Android families have different application
- * ids, so offering one family's APK to the other would install nothing useful.
+ * The manifest's `version` and the asset prefix are separate arguments: the
+ * numbered release has both as `Readest-<version>-...`, while the daily
+ * AutoBuild publishes `Readest-<date>-<sha>-...` assets under a date-based
+ * manifest version (2026.1.1).
+ *
+ * Two manifests are produced for each channel:
+ *   latest.json               desktop + the Android family that replaces the official app
+ *   latest-coexist.json       the Android family that installs alongside it
+ *   latest-autobuild.json     the same two shapes for the daily pre-release
+ *   latest-autobuild-coexist.json
+ *
+ * The two Android families must stay separate in every channel: they have
+ * different application ids, so offering one family's APK to the other would
+ * install nothing useful.
  *
  * Usage:
- *   node tools/make-manifest.mjs --dir <sig-dir> --version <v> --out <file>
- *        [--variant replace|coexist] [--base-url <release download base>]
+ *   node tools/make-manifest.mjs --dir <sig-dir> --version <manifest version> \
+ *        --out <file> [--prefix <asset prefix>] [--variant replace|coexist] \
+ *        [--base-url <release download base>]
  *
  * Missing signatures are reported and skipped rather than fatal, so one
  * platform's packaging change cannot block the other platforms' updates — but an
@@ -43,27 +53,27 @@ const DEFAULT_BASE_URL = 'https://github.com/hirofumo/readest-unlocked/releases/
 const DESKTOP_ENTRIES = [
   {
     keys: ['windows-x86_64', 'windows-x86_64-nsis'],
-    asset: (v) => `Readest-${v}-windows-x64-setup.exe`,
+    asset: (p) => `${p}-windows-x64-setup.exe`,
   },
   {
     keys: ['windows-aarch64', 'windows-aarch64-nsis'],
-    asset: (v) => `Readest-${v}-windows-arm64-setup.exe`,
+    asset: (p) => `${p}-windows-arm64-setup.exe`,
   },
   {
     keys: ['darwin-x86_64', 'darwin-x86_64-app'],
-    asset: (v) => `Readest-${v}-macos-x64-updater.tar.gz`,
+    asset: (p) => `${p}-macos-x64-updater.tar.gz`,
   },
   {
     keys: ['darwin-aarch64', 'darwin-aarch64-app'],
-    asset: (v) => `Readest-${v}-macos-arm64-updater.tar.gz`,
+    asset: (p) => `${p}-macos-arm64-updater.tar.gz`,
   },
   {
     keys: ['linux-x86_64', 'linux-x86_64-appimage'],
-    asset: (v) => `Readest-${v}-linux-x64.AppImage`,
+    asset: (p) => `${p}-linux-x64.AppImage`,
   },
   {
     keys: ['linux-aarch64', 'linux-aarch64-appimage'],
-    asset: (v) => `Readest-${v}-linux-arm64.AppImage`,
+    asset: (p) => `${p}-linux-arm64.AppImage`,
   },
 ];
 
@@ -74,16 +84,16 @@ const DESKTOP_ENTRIES = [
 // every device is offered the package that fits it.
 const ANDROID_ENTRIES = {
   replace: [
-    { keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-replace-arm64-v8a.apk` },
-    { keys: ['android-armv7'], asset: (v) => `Readest-${v}-android-replace-armeabi-v7a.apk` },
-    { keys: ['android-x86_64'], asset: (v) => `Readest-${v}-android-replace-x86_64.apk` },
-    { keys: ['android-x86'], asset: (v) => `Readest-${v}-android-replace-x86.apk` },
+    { keys: ['android-arm64'], asset: (p) => `${p}-android-replace-arm64-v8a.apk` },
+    { keys: ['android-armv7'], asset: (p) => `${p}-android-replace-armeabi-v7a.apk` },
+    { keys: ['android-x86_64'], asset: (p) => `${p}-android-replace-x86_64.apk` },
+    { keys: ['android-x86'], asset: (p) => `${p}-android-replace-x86.apk` },
   ],
   coexist: [
-    { keys: ['android-arm64'], asset: (v) => `Readest-${v}-android-coexist-arm64-v8a.apk` },
-    { keys: ['android-armv7'], asset: (v) => `Readest-${v}-android-coexist-armeabi-v7a.apk` },
-    { keys: ['android-x86_64'], asset: (v) => `Readest-${v}-android-coexist-x86_64.apk` },
-    { keys: ['android-x86'], asset: (v) => `Readest-${v}-android-coexist-x86.apk` },
+    { keys: ['android-arm64'], asset: (p) => `${p}-android-coexist-arm64-v8a.apk` },
+    { keys: ['android-armv7'], asset: (p) => `${p}-android-coexist-armeabi-v7a.apk` },
+    { keys: ['android-x86_64'], asset: (p) => `${p}-android-coexist-x86_64.apk` },
+    { keys: ['android-x86'], asset: (p) => `${p}-android-coexist-x86.apk` },
   ],
 };
 
@@ -102,11 +112,13 @@ function arg(name, fallback) {
 
 const sigDir = path.resolve(arg('dir', 'sigs'));
 const version = arg('version', '');
+const prefix = arg('prefix', '') || `Readest-${version}`;
 const outFile = path.resolve(arg('out', 'latest.json'));
 const variant = arg('variant', 'replace');
 const baseUrl = arg('base-url', DEFAULT_BASE_URL).replace(/\/+$/, '');
 
-if (!version) fail('--version is required (the upstream version, e.g. 0.12.12)');
+if (!version) fail('--version is required (the version the manifest advertises, e.g. 0.12.12)');
+if (!prefix) fail('--prefix is empty');
 if (variant !== 'replace' && variant !== 'coexist') {
   fail(`--variant must be "replace" or "coexist", got "${variant}"`);
 }
@@ -120,7 +132,7 @@ const platforms = {};
 const missing = [];
 
 for (const { keys, asset } of entries) {
-  const name = asset(version);
+  const name = asset(prefix);
   const sigName = `${name}.sig`;
   if (!available.has(sigName)) {
     missing.push(...keys);

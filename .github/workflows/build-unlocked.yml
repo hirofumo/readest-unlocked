@@ -1,9 +1,16 @@
 name: Build unlocked Readest
 
-# Follows readest/readest and publishes an unlocked build of every new upstream
-# release, together with the signed updater manifests the app updates itself
-# from. The upstream source is never committed here: each run checks the tag out,
-# applies tools/unlock.mjs, and builds. See README.md.
+# Follows readest/readest and publishes two channels from one matrix:
+#
+#   release    the numbered release of a new upstream version, tagged v<version>,
+#              with the signed updater manifests the app updates itself from.
+#   autobuild  a daily pre-release of upstream `main`, tagged AutoBuild and
+#              replaced on every build. It publishes its own
+#              latest-autobuild*.json and never touches the numbered release's
+#              update path.
+#
+# The upstream source is never committed here: each run checks the resolved
+# upstream commit out, applies tools/unlock.mjs, and builds. See README.md.
 #
 # `main` publishes. Any other ref — the `topic/**` branch a push comes from, or
 # a manual dispatch from any branch — runs the same matrix as a dry run: every
@@ -25,9 +32,15 @@ on:
     # `refs/heads/dev/...` at the same time.
     branches: ['topic/**']
   schedule:
-    # Daily at 03:00 UTC. Rebuilds only when upstream has a version we have not
-    # published yet, so idle days cost one cheap `detect` job.
+    # Two channels share one matrix:
+    #   03:00 UTC — numbered releases. Rebuilds only when upstream has a version
+    #               we have not published yet, so idle days cost one `detect` job.
+    #   04:00 UTC — AutoBuild, the daily pre-release of upstream `main`. Skipped
+    #               when the upstream commit already sits in the rolling
+    #               `AutoBuild` release, so an unchanged tree costs one `detect`
+    #               job. The one-hour gap keeps the two runs from overlapping.
     - cron: '0 3 * * *'
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       ref:
@@ -38,14 +51,19 @@ on:
         description: 'Rebuild even when a release for this version already exists'
         type: boolean
         default: false
+      autobuild:
+        description: 'Build the daily AutoBuild pre-release from upstream main instead of the latest release tag'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-# One publishing group for main, so a scheduled run and a manual one never write
-# the same release at once. A `topic/**` push gets its own group and cancels its
-# older run: it writes nothing, and the only thing a queue of superseded dry runs
-# costs is runners.
+# One publishing group for main, so the daily release check, the daily AutoBuild
+# and a manual run never write the same release at once. The 04:00 AutoBuild
+# therefore waits for the 03:00 release run instead of overlapping it. A
+# `topic/**` push gets its own group and cancels its older run: it writes
+# nothing, and the only thing a queue of superseded dry runs costs is runners.
 concurrency:
   group: build-unlocked-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -75,9 +93,16 @@ jobs:
       HAS_ANDROID_KEY: ${{ secrets.ANDROID_KEY_BASE64 != '' }}
     outputs:
       build: ${{ steps.resolve.outputs.build }}
+      mode: ${{ steps.resolve.outputs.mode }}
       ref: ${{ steps.resolve.outputs.ref }}
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
+      asset_prefix: ${{ steps.resolve.outputs.asset_prefix }}
+      manifest_version: ${{ steps.resolve.outputs.manifest_version }}
+      date: ${{ steps.resolve.outputs.date }}
+      short_sha: ${{ steps.resolve.outputs.short_sha }}
+      upstream_sha: ${{ steps.resolve.outputs.upstream_sha }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
       android: ${{ steps.android.outputs.android }}
       # Only `main` may touch the release. Everything that writes to it is gated
       # on this, and tools/check-workflow.mjs asserts that it stays that way.
@@ -99,6 +124,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_REF: ${{ inputs.ref }}
+          # The 04:00 schedule and an explicit `autobuild` dispatch are the same
+          # channel: upstream `main`, rolling `AutoBuild` tag, pre-release.
+          INPUT_AUTOBUILD: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 4 * * *') || inputs.autobuild == true }}
           # A dry run always rebuilds: the version it would build is already
           # published, and a run that skipped every leg would verify nothing.
           INPUT_FORCE: ${{ inputs.force == true || github.ref != 'refs/heads/main' }}
@@ -142,8 +170,10 @@ jobs:
             echo "| --- | --- |"
             echo "| triggered by | \`$EVENT\` |"
             echo "| upstream ref | ${{ steps.resolve.outputs.ref }} |"
+            echo "| channel | ${{ steps.resolve.outputs.mode }} |"
             echo "| version | ${{ steps.resolve.outputs.version }} |"
             echo "| release tag | ${{ steps.resolve.outputs.tag }} |"
+            echo "| asset prefix | ${{ steps.resolve.outputs.asset_prefix }} |"
             echo "| build | $BUILD — $reason |"
             echo "| writes to the release | $writes |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -159,34 +189,75 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Create the release when it does not exist yet
+      # The release body is generated from the same values the build uses, so the
+      # notes and the asset names cannot drift apart. Checked out here because
+      # this job runs before the matrix and needs the recipe's tools.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Generate the release body
+        env:
+          MODE: ${{ needs.detect.outputs.mode }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          TAG: ${{ needs.detect.outputs.tag }}
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
+          DATE: ${{ needs.detect.outputs.date }}
+          SHORT_SHA: ${{ needs.detect.outputs.short_sha }}
+          UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          args=(--mode "$MODE" --version "$VERSION" --prefix "$PREFIX" --tag "$TAG"
+                --repo "$REPO" --out release-body.md)
+          if [ "$MODE" = "autobuild" ]; then
+            args+=(--date "$DATE" --short-sha "$SHORT_SHA" --upstream-sha "$UPSTREAM_SHA")
+          fi
+          node tools/release-notes.mjs "${args[@]}"
+
+      - name: Create or refresh the release
         # A dry run leaves the release alone — and this job still has to *run*:
         # every leg needs it, so skipping the job would skip the whole matrix.
         if: needs.detect.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          MODE: ${{ needs.detect.outputs.mode }}
           TAG: ${{ needs.detect.outputs.tag }}
           VERSION: ${{ needs.detect.outputs.version }}
-          REF: ${{ needs.detect.outputs.ref }}
         run: |
           set -euo pipefail
+
+          if [ "$MODE" = "autobuild" ]; then
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              # Replaced wholesale: the asset names carry the build date and the
+              # upstream commit, so a new build would otherwise leave the
+              # previous day's files on the page looking like this build's.
+              gh release view "$TAG" --json assets --jq '.assets[].name' |
+                while IFS= read -r name; do
+                  gh release delete-asset "$TAG" "$name" --yes
+                done
+              gh release edit "$TAG" \
+                --title "Readest AutoBuild" \
+                --notes-file release-body.md \
+                --prerelease
+            else
+              gh release create "$TAG" \
+                --title "Readest AutoBuild" \
+                --notes-file release-body.md \
+                --prerelease \
+                --target "$GITHUB_SHA"
+            fi
+            exit 0
+          fi
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; assets will be replaced with --clobber."
+            echo "Release $TAG already exists; refreshing its title and notes."
+            gh release edit "$TAG" --title "Readest $VERSION" --notes-file release-body.md
           else
-            NOTES="Automatically built unlocked Readest $VERSION, from $UPSTREAM_REPO at $REF.
-
-          Premium client gates are disabled: third-party cloud sync (WebDAV, S3-compatible bucket, Google Drive, OneDrive, iCloud Drive), per-chapter read-aloud audio download, Audiobookshelf offline downloads, trusted-device pairing, and custom translators with your own API key. Settings also gains a Self-hosted entry (Custom -> Self-hosted), so the app can be pointed at your own Readest server instead of the official ones.
-
-          Still decided by the upstream service, not unlockable in a client build: Readest Cloud storage quota, daily AI translation quota, and the Send-to-Readest email address.
-
-          Assets are named Readest-<version>-<platform>-<arch or variant>-<type>. Windows, macOS and Linux ship one build per architecture (x64 and arm64 each); Android ships two families (replace and coexist) in four ABIs each — arm64-v8a, armeabi-v7a, x86_64 and x86 — and iOS ships one unsigned arm64 IPA. There is no universal macOS build and no universal Android APK: the Android one was the slowest work in the whole pipeline, and every ABI it covered is published on its own instead. In-app updates come from latest.json for the desktop builds and the replacing Android family, and from latest-coexist.json for the coexisting family. On Android the app asks for the manifest key that matches the device's ABI — android-arm64, android-armv7, android-x86_64 or android-x86 — and each manifest carries all four, so every device is offered the package built for it. The Windows portable download is a zip and does not update itself, and iOS cannot self-update at all — the IPA has to be re-signed with your own Apple ID and reinstalled.
-
-          Readest is AGPL-3.0. These installers are unmodified upstream code plus the patch scripts in this repository. They are not signed by a code-signing certificate, so Windows SmartScreen and macOS Gatekeeper will warn on first launch, and the iOS IPA must be re-signed before it installs."
-
             gh release create "$TAG" \
-              --title "Readest $VERSION (unlocked build)" \
-              --notes "$NOTES" \
+              --title "Readest $VERSION" \
+              --notes-file release-body.md \
               --target "$GITHUB_SHA"
           fi
 
@@ -242,7 +313,7 @@ jobs:
           # read it and push with this job's `contents: write`.
           persist-credentials: false
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ needs.detect.outputs.ref }}
+          ref: ${{ needs.detect.outputs.upstream_sha }}
 
       - name: Check out the build recipe
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -387,7 +458,7 @@ jobs:
           # read it and push with this job's `contents: write`.
           persist-credentials: false
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ needs.detect.outputs.ref }}
+          ref: ${{ needs.detect.outputs.upstream_sha }}
 
       - name: Initialize the submodules
         run: git submodule update --init --recursive
@@ -558,6 +629,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.detect.outputs.tag }}
           VERSION: ${{ needs.detect.outputs.version }}
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
         run: |
           set -euo pipefail
           # A dry run does everything this step does except the upload itself, so
@@ -569,8 +641,8 @@ jobs:
               echo "dry run: not uploading $*"
             fi
           }
-          setup="Readest-${VERSION}-windows-${{ matrix.config.arch }}-setup.exe"
-          portable="Readest-${VERSION}-windows-${{ matrix.config.arch }}-portable.zip"
+          setup="${PREFIX}-windows-${{ matrix.config.arch }}-setup.exe"
+          portable="${PREFIX}-windows-${{ matrix.config.arch }}-portable.zip"
 
           mv windows-setup.exe "$setup"
           mv windows-setup.exe.sig "$setup.sig"
@@ -592,6 +664,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.detect.outputs.tag }}
           VERSION: ${{ needs.detect.outputs.version }}
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
         run: |
           set -euo pipefail
           # See the Windows step: the guard covers only the upload, so the
@@ -604,7 +677,7 @@ jobs:
             fi
           }
           bundle="target/${{ matrix.config.target }}/release/bundle"
-          dmg="Readest-${VERSION}-macos-${{ matrix.config.arch }}.dmg"
+          dmg="${PREFIX}-macos-${{ matrix.config.arch }}.dmg"
           cp "$(ls "$bundle"/dmg/*.dmg | head -n 1)" "$dmg"
           upload "$dmg"
 
@@ -614,7 +687,7 @@ jobs:
             echo "::error::no .app.tar.gz updater archive was produced; this macOS build cannot be updated in place"
             exit 1
           fi
-          updater="Readest-${VERSION}-macos-${{ matrix.config.arch }}-updater.tar.gz"
+          updater="${PREFIX}-macos-${{ matrix.config.arch }}-updater.tar.gz"
           cp "$tarball" "$updater"
           cp "$tarball.sig" "$updater.sig"
           upload "$updater" "$updater.sig"
@@ -626,6 +699,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.detect.outputs.tag }}
           VERSION: ${{ needs.detect.outputs.version }}
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
         run: |
           set -euo pipefail
           # See the Windows step: the guard covers only the upload, so the
@@ -654,16 +728,16 @@ jobs:
             exit 1
           fi
 
-          appimage="Readest-${VERSION}-linux-${arch}.AppImage"
+          appimage="${PREFIX}-linux-${arch}.AppImage"
           cp "$appimage_src" "$appimage"
           cp "$appimage_src.sig" "$appimage.sig"
-          cp "$(ls "$bundle"/deb/*.deb | head -n 1)" "Readest-${VERSION}-linux-${arch}.deb"
-          cp "$(ls "$bundle"/rpm/*.rpm | head -n 1)" "Readest-${VERSION}-linux-${arch}.rpm"
+          cp "$(ls "$bundle"/deb/*.deb | head -n 1)" "${PREFIX}-linux-${arch}.deb"
+          cp "$(ls "$bundle"/rpm/*.rpm | head -n 1)" "${PREFIX}-linux-${arch}.rpm"
 
           upload \
             "$appimage" "$appimage.sig" \
-            "Readest-${VERSION}-linux-${arch}.deb" \
-            "Readest-${VERSION}-linux-${arch}.rpm"
+            "${PREFIX}-linux-${arch}.deb" \
+            "${PREFIX}-linux-${arch}.rpm"
 
   # ---------------------------------------------------------------------------
   # Android: skipped outright until the signing secrets exist. Builds two
@@ -708,7 +782,7 @@ jobs:
           # read it and push with this job's `contents: write`.
           persist-credentials: false
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ needs.detect.outputs.ref }}
+          ref: ${{ needs.detect.outputs.upstream_sha }}
 
       - name: Initialize the submodules
         run: git submodule update --init --recursive
@@ -920,6 +994,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.detect.outputs.tag }}
           VERSION: ${{ needs.detect.outputs.version }}
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
           # `pnpm tauri signer sign` runs at the end of this step.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -936,7 +1011,7 @@ jobs:
           }
           family="${{ matrix.family }}"
           variant="${{ matrix.variant }}"
-          apk="Readest-${VERSION}-android-${family}-${variant}.apk"
+          apk="${PREFIX}-android-${family}-${variant}.apk"
           mv "android-${family}-${variant}.apk" "$apk"
 
           # Read the ABIs out of the APK rather than trusting its name or size.
@@ -988,7 +1063,7 @@ jobs:
           # read it and push with this job's `contents: write`.
           persist-credentials: false
           repository: ${{ env.UPSTREAM_REPO }}
-          ref: ${{ needs.detect.outputs.ref }}
+          ref: ${{ needs.detect.outputs.upstream_sha }}
 
       - name: Initialize the submodules
         run: git submodule update --init --recursive
@@ -1239,9 +1314,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.detect.outputs.tag }}
           VERSION: ${{ needs.detect.outputs.version }}
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
         run: |
           set -euo pipefail
-          ipa="Readest-${VERSION}-ios-arm64.ipa"
+          ipa="${PREFIX}-ios-arm64.ipa"
           cp apps/readest-app/src-tauri/gen/apple/build/arm64/Readest.ipa "$ipa"
           ls -l "$ipa"
           # No .sig next to it, on purpose: the Tauri updater does not support
@@ -1306,8 +1382,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.detect.outputs.tag }}
+          MODE: ${{ needs.detect.outputs.mode }}
           VERSION: ${{ needs.detect.outputs.version }}
-        run: node tools/check-release-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$TAG" --version "$VERSION"
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
+        run: |
+          node tools/check-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" --tag "$TAG" \
+            --mode "$MODE" --version "$VERSION" --prefix "$PREFIX"
 
       - name: Download the signature files
         env:
@@ -1322,20 +1403,47 @@ jobs:
 
       - name: Build the manifests
         env:
-          VERSION: ${{ needs.detect.outputs.version }}
+          MODE: ${{ needs.detect.outputs.mode }}
+          MANIFEST_VERSION: ${{ needs.detect.outputs.manifest_version }}
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
+          # A manifest entry is a URL the updater downloads, so the pre-release
+          # entries must resolve inside the AutoBuild release, not latest.
+          AUTO_BASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ needs.detect.outputs.tag }}
         run: |
           set -euo pipefail
-          node tools/make-manifest.mjs --dir sigs --version "$VERSION" --variant replace --out latest.json
-          node tools/make-manifest.mjs --dir sigs --version "$VERSION" --variant coexist --out latest-coexist.json
+          if [ "$MODE" = "autobuild" ]; then
+            node tools/make-manifest.mjs --dir sigs --version "$MANIFEST_VERSION" \
+              --base-url "$AUTO_BASE_URL" \
+              --prefix "$PREFIX" --variant replace --out latest-autobuild.json
+            node tools/make-manifest.mjs --dir sigs --version "$MANIFEST_VERSION" \
+              --base-url "$AUTO_BASE_URL" \
+              --prefix "$PREFIX" --variant coexist --out latest-autobuild-coexist.json
+          else
+            node tools/make-manifest.mjs --dir sigs --version "$MANIFEST_VERSION" \
+              --prefix "$PREFIX" --variant replace --out latest.json
+            node tools/make-manifest.mjs --dir sigs --version "$MANIFEST_VERSION" \
+              --prefix "$PREFIX" --variant coexist --out latest-coexist.json
+          fi
 
       - name: Publish the manifests and the release notes
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          MODE: ${{ needs.detect.outputs.mode }}
           TAG: ${{ needs.detect.outputs.tag }}
           REF: ${{ needs.detect.outputs.ref }}
         run: |
           set -euo pipefail
+
+          if [ "$MODE" = "autobuild" ]; then
+            # The pre-release has manifest names of its own. The app never
+            # fetches these, so a daily build cannot change the numbered
+            # release's update path — they are here for tooling and for a
+            # future client that opts in to the pre-release channel.
+            gh release upload "$TAG" latest-autobuild.json latest-autobuild-coexist.json --clobber
+            exit 0
+          fi
+
           gh release upload "$TAG" latest.json latest-coexist.json --clobber
 
           # The "recent updates" view reads this file; upstream's own copy is
@@ -1426,7 +1534,9 @@ jobs:
 
       - name: Report
         env:
+          MODE: ${{ needs.detect.outputs.mode }}
           TAG: ${{ needs.detect.outputs.tag }}
+          PREFIX: ${{ needs.detect.outputs.asset_prefix }}
           BUILD: ${{ needs.detect.outputs.build }}
           PUBLISH: ${{ needs.detect.outputs.publish }}
           DESKTOP: ${{ needs.build.result }}
@@ -1439,9 +1549,13 @@ jobs:
             echo "## Result"
             echo ""
             if [ "$BUILD" != "true" ]; then
-              echo "Upstream has not published a new version since the last release; nothing was built."
+              if [ "$MODE" = "autobuild" ]; then
+                echo "AutoBuild already carries the current upstream \`main\`; nothing was built."
+              else
+                echo "Upstream has not published a new version since the last release; nothing was built."
+              fi
             elif [ "$PUBLISH" != "true" ]; then
-              echo "Dry run: every leg built and asserted, nothing was published, and \`$TAG\` is untouched."
+              echo "Dry run ($MODE): every leg built and asserted, nothing was published, and \`$TAG\` is untouched."
               echo ""
               echo "| leg | result |"
               echo "| --- | --- |"
@@ -1451,7 +1565,9 @@ jobs:
               echo "| updater manifests | $MANIFEST (skipped: dry run) |"
               echo "| patch export | $PATCH |"
             else
-              echo "Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
+              echo "Release ($MODE): ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG"
+              echo ""
+              echo "Asset prefix: \`$PREFIX\`"
               echo ""
               echo "| leg | result |"
               echo "| --- | --- |"
@@ -1520,6 +1636,6 @@ jobs:
           produced again."
 
           node tools/report-failure.mjs \
-            --title "Build failure: unlocked Readest ${VERSION}" \
+            --title "Build failure: ${TAG}" \
             --body "$body" \
             --label build-failure

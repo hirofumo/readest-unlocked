@@ -30,7 +30,7 @@
 
 ## 下载与安装
 
-`<V>` 是上游版本号，例如 `0.12.16`。每个 release 的 tag 是 `v<V>-unlocked`，产物都按 `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>` 命名，其中 `<type>` 是产物类型（`setup`、`portable`、`updater` 等）：
+`<V>` 是上游版本号，例如 `0.12.16`。正式版的 tag 是 `v<V>`，产物都按 `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>` 命名，其中 `<type>` 是产物类型（`setup`、`portable`、`updater` 等）：
 
 | 平台 | 架构 / 变体 | 产物 |
 | --- | --- | --- |
@@ -77,6 +77,20 @@ Android 会发布两种包，装出来都叫 **Readest**，不同之处在应用
 
 **以上这些都没有在 CI 上做过真机验证。** 构建能证明的是包在结构上没问题（见 [发布是怎么验证的](#发布是怎么验证的)），而不是它装得上、跑得起来。第一次装到设备上，就把它当作你自己的测试。
 
+### 每日构建 AutoBuild
+
+除了正式版，本仓库每天还会从上游 `main` 分支构建一份预发行版，发布在同一个 `AutoBuild` release 里。文件名用构建日期和上游提交标记，例如：
+
+```
+Readest-2026.10.18-767f834-android-coexist-arm64-v8a.apk
+```
+
+- 命名规则是 `Readest-<日期>-<上游短 SHA>-<平台>-<架构或变体>-<类型>`，日期形如 `2026.10.18`，其余部分与正式版一致。
+- 每次构建都会替换上一次的资产：`AutoBuild` 页面始终只有最新一份构建，旧文件不会保留。
+- 它是预发行版，可能不稳定。日常使用请选正式版（tag `v<V>`）。
+- 它**不参与应用内更新**。`AutoBuild` 只发布 `latest-autobuild.json` 和 `latest-autobuild-coexist.json`，应用当前不读取这两个文件；要升级就重新下载安装包。正式版的 `latest.json` / `latest-coexist.json` 不受影响。
+- 上游 `main` 没有新提交的日子，这一轮只跑一次版本解析，不会构建。
+
 ## 校验下载
 
 有两件相互独立的事可以校验，它们回答的是不同问题。
@@ -84,7 +98,7 @@ Android 会发布两种包，装出来都叫 **Readest**，不同之处在应用
 **文件完整送达。** 每个 release 都会发布 `SHA256SUMS`，格式就是 `shasum` 的输出，标准工具可以直接读：
 
 ```bash
-gh release download v0.12.16-unlocked --repo hirofumo/readest-unlocked --pattern SHA256SUMS
+gh release download v0.12.16 --repo hirofumo/readest-unlocked --pattern SHA256SUMS
 # 再下载你要的那一个产物，然后：
 sha256sum -c SHA256SUMS --ignore-missing      # 或：shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
@@ -131,7 +145,7 @@ gh attestation verify Readest-0.12.16-windows-x64-setup.exe --repo hirofumo/read
 
 ## 发布流程
 
-本仓库每天检查一次上游。上游一旦发布了本仓库还没有对应 release 的版本，就会为上面表格里的每个平台各构建一份，以 `v<V>-unlocked` 发布出去；上游没有新版本的日子，只花掉这一次检查。也可以手动触发重建，还能指定要构建的上游 tag、分支或 commit。
+本仓库每天检查一次上游。上游一旦发布了本仓库还没有对应 release 的版本，就会为上面表格里的每个平台各构建一份，以 `v<V>` 发布出去；上游没有新版本的日子，只花掉这一次检查。另外每天还有一次 AutoBuild（见上面的「每日构建 AutoBuild」），从上游 `main` 构建预发行版。也可以手动触发重建，还能指定要构建的上游 tag、分支或 commit。
 
 每个 release 都出自同一套步骤：checkout 上游 tag、套用 `tools/` 里的补丁脚本、断言源码已按要求修改、编译、断言编译产物、把每个包读回来核对，最后才上传。
 

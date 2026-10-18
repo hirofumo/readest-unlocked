@@ -14,12 +14,21 @@
  * this list, which is the point: the list is the contract, and this check runs
  * before a run stamps new manifests, checksums and provenance over the release.
  *
+ * Two channels are checked with the same contract:
+ *
+ *   release    assets `Readest-<version>-...`, plus latest.json,
+ *              latest-coexist.json and release-notes.json
+ *   autobuild  assets `Readest-<date>-<sha>-...`, plus latest-autobuild.json
+ *              and latest-autobuild-coexist.json — the daily pre-release never
+ *              publishes the updated manifests the app actually follows
+ *
  * Unexpected assets are fatal. Missing ones are only reported: a leg that failed
  * leaves either nothing or the previous build's asset in place, and the updater
  * manifests already say which platforms are being offered.
  *
  * Usage:
- *   node tools/check-release-assets.mjs --repo <owner/repo> --tag <tag> --version <v>
+ *   node tools/check-release-assets.mjs --repo <owner/repo> --tag <tag> \
+ *        --version <v> [--mode release|autobuild] [--prefix <asset prefix>]
  *
  * Reads GH_TOKEN / GITHUB_TOKEN when present to raise the rate limit.
  */
@@ -56,35 +65,41 @@ const ANDROID_FAMILIES = ['replace', 'coexist'];
 // them: `-t i686` builds the x86 package.
 const ANDROID_ABIS = ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'];
 
-function contract(version) {
+function contract({ mode, prefix }) {
   const expected = new Set();
   const add = (...names) => names.forEach((name) => expected.add(name));
 
   for (const arch of WINDOWS_ARCHES) {
     // The installer is the updater artifact, so it is signed; the portable build
     // is a zip and carries no signature.
-    add(`Readest-${version}-windows-${arch}-setup.exe`, `Readest-${version}-windows-${arch}-setup.exe.sig`);
-    add(`Readest-${version}-windows-${arch}-portable.zip`);
+    add(`${prefix}-windows-${arch}-setup.exe`, `${prefix}-windows-${arch}-setup.exe.sig`);
+    add(`${prefix}-windows-${arch}-portable.zip`);
   }
   for (const variant of MACOS_VARIANTS) {
     // The dmg is for humans; the updater artifact is the .app tarball.
-    add(`Readest-${version}-macos-${variant}.dmg`);
-    add(`Readest-${version}-macos-${variant}-updater.tar.gz`, `Readest-${version}-macos-${variant}-updater.tar.gz.sig`);
+    add(`${prefix}-macos-${variant}.dmg`);
+    add(`${prefix}-macos-${variant}-updater.tar.gz`, `${prefix}-macos-${variant}-updater.tar.gz.sig`);
   }
   for (const arch of LINUX_ARCHES) {
     // The AppImage is itself the updater artifact, so it is signed in place.
-    add(`Readest-${version}-linux-${arch}.AppImage`, `Readest-${version}-linux-${arch}.AppImage.sig`);
-    add(`Readest-${version}-linux-${arch}.deb`, `Readest-${version}-linux-${arch}.rpm`);
+    add(`${prefix}-linux-${arch}.AppImage`, `${prefix}-linux-${arch}.AppImage.sig`);
+    add(`${prefix}-linux-${arch}.deb`, `${prefix}-linux-${arch}.rpm`);
   }
   for (const family of ANDROID_FAMILIES) {
     for (const abi of ANDROID_ABIS) {
-      add(`Readest-${version}-android-${family}-${abi}.apk`, `Readest-${version}-android-${family}-${abi}.apk.sig`);
+      add(`${prefix}-android-${family}-${abi}.apk`, `${prefix}-android-${family}-${abi}.apk.sig`);
     }
   }
   // iOS: unsigned on purpose, and not an updater target, so no .sig.
-  add(`Readest-${version}-ios-arm64.ipa`);
+  add(`${prefix}-ios-arm64.ipa`);
+
   // The release's own documents, written by the pipeline rather than by a leg.
-  add('SHA256SUMS', 'unlock.patch', 'BUILD.md', 'latest.json', 'latest-coexist.json', 'release-notes.json');
+  add('SHA256SUMS', 'unlock.patch', 'BUILD.md');
+  if (mode === 'autobuild') {
+    add('latest-autobuild.json', 'latest-autobuild-coexist.json');
+  } else {
+    add('latest.json', 'latest-coexist.json', 'release-notes.json');
+  }
 
   return expected;
 }
@@ -94,13 +109,21 @@ function contract(version) {
 async function main() {
   const repo = arg('repo', process.env['GITHUB_REPOSITORY'] ?? '');
   const tag = arg('tag', '');
+  const mode = arg('mode', 'release');
   const version = arg('version', '');
+  const prefix = arg('prefix', '') || `Readest-${version}`;
 
   if (!repo) fail('--repo is required (owner/repo)');
   if (!tag) fail('--tag is required');
-  if (!version) fail('--version is required (the upstream version, e.g. 0.12.12)');
+  if (mode !== 'release' && mode !== 'autobuild') {
+    fail(`--mode must be "release" or "autobuild", got "${mode}"`);
+  }
+  if (!prefix) fail('--prefix is empty');
+  if (mode === 'autobuild' && !arg('prefix', '')) {
+    fail('--prefix is required with --mode autobuild');
+  }
 
-  const expected = contract(version);
+  const expected = contract({ mode, prefix });
   const headers = {
     Accept: 'application/vnd.github+json',
     'User-Agent': 'readest-unlocked-assets',
@@ -119,7 +142,9 @@ async function main() {
   const unexpected = [...actual].filter((name) => !expected.has(name)).sort();
   const missing = [...expected].filter((name) => !actual.has(name)).sort();
 
-  console.log(`[assets] release ${tag} holds ${actual.size} asset(s); the contract lists ${expected.size}`);
+  console.log(
+    `[assets] release ${tag} (${mode}) holds ${actual.size} asset(s); the contract lists ${expected.size}`,
+  );
 
   if (unexpected.length) {
     fail(
@@ -145,7 +170,7 @@ async function main() {
     appendFileSync(
       summaryFile,
       [
-        `**release assets** — ${actual.size} present, contract ${expected.size}`,
+        `**release assets** (${mode}) — ${actual.size} present, contract ${expected.size}`,
         ...(missing.length ? [`> Missing: ${missing.join(', ')}`] : []),
         '',
       ].join('\n') + '\n',
