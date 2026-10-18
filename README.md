@@ -20,21 +20,24 @@ The first five features run through the same client-side entitlement check. Thes
 | Trusted-device pairing | Nearby BookDrop transfers no longer ask for confirmation for each individual transfer. |
 | Custom translators | Translation through your own OpenAI-compatible endpoint or your own DeepL key. |
 
-No account is needed for any of this: with no signed-in user the app keeps a local library, and syncing can go to WebDAV or an S3-compatible bucket — both are third-party sync.
+No Readest account is needed for any of this: with no signed-in user the app keeps a local library, and syncing can go to WebDAV or an S3-compatible bucket — both are third-party sync.
 
 Upstream already supports self-hosted servers but does not expose a configuration entry; this build adds a **Self-hosted** entry (Settings → Custom → Self-hosted) that points the app at your own Readest server. It is an added entry, not part of the client-side entitlement check above.
 
 ### Not unlocked
 
-The service decides these server-side, from the account token. A client build cannot change that, and this project does not claim otherwise:
+These depend on the service or the account backend, cannot be changed by a client build, and are outside what this build unlocks:
 
-- Readest Cloud storage quota and upload limits
-- the daily AI translation character quota
-- the Send-to-Readest personal email address
+- **Readest Cloud**: storage quota and upload limits are decided server-side. An official account provides a quota for your plan; with a self-hosted backend, the quota comes from your own instance.
+- **AI translation**: the daily character quota is decided server-side; a self-hosted instance sets it with `TRANSLATION_FIXED_QUOTA`.
+- **Send-to-Readest**: the personal email address needs the account backend. An official subscription provides it; with a self-hosted backend the address is issued by your instance, but actually receiving mail needs a mail service you configure yourself (upstream's compose stack does not ship one).
+- **Shared books**: share links and their content need the account backend. On an official account, shared content counts against your storage quota; with a self-hosted backend, the links and content are served by your own instance.
 
-One caveat on the last one. Its gate runs through the same client-side check this build opens, so the client half of that gate opens along with everything else: the Send-to-Readest panel asks the official server for an address and reports a load failure for an account the server refuses, where an unpatched build showed the upgrade card instead. The capability itself stays server-decided.
+The Send-to-Readest gate runs through the same client-side check this build opens, so the client half of that gate opens along with everything else: the Send-to-Readest panel asks the official server for an address and reports a load failure for an account the server refuses, where an unpatched build showed the upgrade card instead. The capability itself stays server-decided.
 
-The account backend is only needed for Readest Cloud, the Send-to-Readest address and shared annotations.
+### How the unlock works
+
+The rule this build follows is upstream's own rule for self-hosted users: `SELF_HOSTED=true` is upstream's switch, enabled by default in their image, and it unlocks the premium client features for a self-hosted deployment (signed in or not). These builds enable it by default too and add a **Self-hosted** entry in Settings — no separate rule was invented.
 
 ## Self-hosting
 
@@ -42,9 +45,9 @@ Self-hosting has two halves: pointing the client at your own server, and running
 
 ### Client setup
 
-Settings has a **Self-hosted** entry — **Custom → Self-hosted**, a second-level page — that mirrors the WebDAV panel.
+Settings has a **Self-hosted** entry — **Custom → Self-hosted**, a second-level page — that matches the third-party cloud sync page.
 
-Connecting probes the server address first — a `GET` of it through the app's own fetch helper, so the answer is the answer the app itself would get — and only an unreachable host or a 5xx refuses it. Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. Disconnecting keeps both — the address stays put, so reconnecting is one click — and returns to the official servers. Connecting and disconnecting both reload the app, because the API base and the Supabase client are resolved once at startup; either way a toast appears first, then the app restarts.
+Connecting probes the server address first — a `GET` of it through the app's own fetch helper, so the result is what the app itself would encounter — and only an unreachable host or a 5xx refuses it. Setting the URL moves the whole backend to a self-hosted instance: the web/API origin, the Node API origin, the account backend, and the web links the app builds for exported annotations. The anon key is optional, and needed only when the self-hosted instance runs its own Supabase, whose keys differ from the official project's; leave it empty when the instance reuses the official project keys or runs no accounts at all. Disconnecting keeps both — the address stays put, so reconnecting is one click — and returns to the official servers. Connecting and disconnecting both reload the app, because the API base and the Supabase client are resolved once at startup; either way a toast appears first, then the app restarts.
 
 Not covered: the CDN hosts for webfonts and published covers, and the readest.com landing pages the web build links to. The desktop app reaches the former only for optional assets and copes without them.
 
@@ -52,9 +55,9 @@ Not covered: the CDN hosts for webfonts and published covers, and the readest.co
 
 The server side is upstream's: [readest/docker](https://github.com/readest/readest/tree/main/docker) ships a `compose.yaml` that brings up the app, the API and a Supabase stack, and its README documents the environment variables.
 
-Worth knowing before you pick a build: `SELF_HOSTED=true` is **upstream's own** switch for this case, and their published image sets it by default — upstream unlocks the premium client features for a self-hosted deployment, signed in or not. This project applies the same rule to the desktop, Android and iOS builds, which upstream does not publish; it does not invent a different one.
+## Release contents
 
-## Downloading and installing
+### Numbered release
 
 `<V>` is the upstream version, for example `0.12.16`. The numbered release is tagged `v<V>`, and every asset is named `Readest-<V>-<platform>-<arch or variant>-<type>.<ext>`, where `<type>` is the artifact kind (`setup`, `portable`, `updater`, and so on):
 
@@ -70,29 +73,22 @@ The Windows installer and the Linux AppImage double as the updater artifacts: th
 
 Every platform ships one build per architecture — there is no macOS universal build and no universal Android APK any more. Android further splits into the replacing and coexisting families, and each ABI is published on its own so a download can be picked that matches the device.
 
-The artifacts are not signed by a code-signing certificate.
+The artifacts are not signed by a platform code-signing certificate; the updater `.sig` files are separate.
 
 - **Windows**: SmartScreen warns on first run. The installer updates itself; the portable zip does not.
 - **macOS**: Gatekeeper blocks the first launch. Run `xattr -cr /Applications/Readest.app`, then open the app again.
 - **Android**: see [the two families](#the-two-android-families) below before choosing an APK.
 - **iOS**: the IPA is unsigned, so it has to be signed with your own Apple ID before it installs — see [the iOS artifacts](#ios-artifacts) below, including what a free Apple ID cannot do.
-- **Android, updating automatically**: the asset names are stable, so
-  [Obtainium](https://github.com/ImranR98/Obtainium) can follow this repository
-  directly — add `https://github.com/hirofumo/readest-unlocked` as a GitHub
-  source and narrow it to the APK you installed, for example
-  `Readest-[\d.]+-android-replace-arm64-v8a\.apk` or
-  `Readest-[\d.]+-android-coexist-armeabi-v7a\.apk`. Pick the regex that matches
-  the family and the ABI already on the device: the two families have different
-  application ids and cannot update each other.
+- **Android, updating automatically**: the asset names are stable, so [Obtainium](https://github.com/ImranR98/Obtainium) can follow this repository directly — add `https://github.com/hirofumo/readest-unlocked` as a GitHub source and narrow it to the APK you installed, for example `Readest-[\d.]+-android-replace-arm64-v8a\.apk` or `Readest-[\d.]+-android-coexist-armeabi-v7a\.apk`. Pick the regex that matches the family and the ABI already on the device: the two families have different application ids and cannot update each other.
 
-### The two Android families
+#### The two Android families
 
 Both families install as **Readest**. They differ in the application id and in whether they can coexist with the official app.
 
 | Family | Application id | Behaviour |
 | --- | --- | --- |
 | Replacing | `com.bilingify.readest` | The same identity the official app uses. Choose it when you are replacing the official app or never had it installed; a backup restored afterwards lands in the same place. The official app has to be removed first — see below. |
-| Coexisting | `com.hirofumo.readest.unlocked` (default; override with `READEST_COEXIST_IDENTIFIER` in a fork) | Installs side by side with the official app, and starts with an empty library. |
+| Coexisting | `com.hirofumo.readest.unlocked` | Installs side by side with the official app, and starts with an empty library. |
 
 The About dialog states which of the two is installed.
 
@@ -102,13 +98,13 @@ On the desktop the position is different: those builds also keep upstream's iden
 
 **Which APK, and what updates itself.** The four ABIs are published separately: `arm64-v8a` for current phones and tablets, `armeabi-v7a` for older 32-bit ARM devices, and `x86_64` / `x86` for emulators and x86 hardware. Each family is the same app under a different application id, so pick the family first and the ABI second. In-app updates work on every ABI: the app asks for the manifest key matching the device (`android-arm64`, `android-armv7`, `android-x86_64`, `android-x86`) and each manifest carries all four, each pointing at the package built for that ABI. That key mapping is part of this build's patch — an unpatched upstream build maps aarch64 to `android-arm64`, arm to `android-armv7` and every other arch to `android-legacy`, a key this project never publishes, so `x86_64` and `x86` devices would be offered no update at all.
 
-### iOS artifacts
+#### iOS artifacts
 
 This repository has no Apple certificate, so the iOS asset is an honestly **unsigned** IPA: on its own it installs nothing. It is the app, archived for arm64 devices and packaged as `Payload/Readest.app`, and signing it is your side of the job — AltStore, SideStore, Sideloadly or Xcode, with your own Apple ID and provisioning profile.
 
 What the resulting install can do depends on the account you sign with. App Groups are not available to free personal teams, and the reading widget and the share extension both rely on one, so expect those two to be degraded or missing unless you sign with a paid team. The package keeps upstream's bundle id `com.bilingify.readest`, so installing over an App Store copy of Readest requires removing that copy first.
 
-**None of this has been verified on a device from CI.** What the build proves is that the package is structurally correct — see [How a release is verified](#how-a-release-is-verified) — not that it installs or runs. Treat the first device install as your own test.
+**None of this has been verified on a device from CI.** What the build proves is that the package is structurally correct — see [Verifying releases](#verifying-releases) — not that it installs or runs. Treat the first device install as your own test.
 
 ### Nightly Build
 
@@ -126,7 +122,7 @@ Readest-2026.10.18-767f834-android-coexist-arm64-v8a.apk
 - With **Settings → Control → Nightly Builds** enabled, the app checks `nightly.json` and installs new Nightly Builds automatically. Windows portable builds are not in this channel and still need a manual download. The numbered release's `latest.json` / `latest-coexist.json` are unaffected.
 - A day without a new upstream `main` commit costs one version resolution, not a build.
 
-## Verifying a download
+### Verifying a download
 
 Two independent things can be checked, and they answer different questions.
 
@@ -147,7 +143,7 @@ workflow run that produced the artifacts:
 gh attestation verify Readest-0.12.16-windows-x64-setup.exe --repo hirofumo/readest-unlocked
 ```
 
-Any asset works the same way, the Android APKs and the iOS IPA included. The
+Any asset works the same way, the Android APKs and the iOS IPA included; Nightly Build assets work too — use `NightlyBuild` as the tag and the file name with the date and SHA in it. The
 command fails unless the file came out of a workflow run in this repository, and
 it reports which commit and which run produced it. What it does **not** claim is
 that the code is harmless. For that, read the patch: every release also carries
@@ -155,21 +151,21 @@ that the code is harmless. For that, read the patch: every release also carries
 which names that upstream commit, the recipe commit, the build-time variables,
 and how to check a download.
 
-## Self-update
+### Self-update
 
 The app updates itself from this repository's releases, not from readest.com.
 
-Each release publishes a signed updater manifest — `latest.json` for the replacing Android family and the desktop builds, `latest-coexist.json` for the coexisting Android family — together with the `.sig` files the Tauri updater verifies against a public key compiled into the app. The Windows portable zip and the iOS IPA are the exceptions described above and do not update themselves. The private signing key is held only in this repository's secrets and never ships in a build. Keep that private key and its password: because the matching public key is compiled into the app, losing them means no future release can be signed and already-installed apps will stop accepting updates.
+Each release publishes a signed updater manifest — `latest.json` for the replacing Android family and the desktop builds, `latest-coexist.json` for the coexisting Android family — together with the `.sig` files the Tauri updater verifies against a public key compiled into the app. The Windows portable zip and the iOS IPA are the exceptions described above and do not update themselves. Nightly Builds follow `nightly.json` (see [Nightly Build](#nightly-build)), not `latest.json` / `latest-coexist.json`. The private signing key is held only in this repository's secrets and never ships in a build. Keep that private key and its password: because the matching public key is compiled into the app, losing them means no future release can be signed and already-installed apps will stop accepting updates.
 
 ## How releases are produced
 
 Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>`; a day without a new upstream version costs nothing but that check. A separate daily Nightly Build (see [Nightly Build](#nightly-build)) builds a pre-release from upstream `main`. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
 
-Every release comes out of the same recipe: check the upstream tag out, apply the patch scripts in `tools/`, assert the patched sources, build, assert the built bundle, then read every package back before uploading it.
+Every release comes out of the same recipe: check the upstream tag or commit out, apply the patch scripts in `tools/`, assert the patched sources, build, assert the built bundle, then read every package back before uploading it.
 
-A patch that no longer fits upstream's code fails the build instead of being skipped: a silently still-locked build is the one outcome this project refuses to publish.
+A patch that no longer fits upstream's code fails the build instead of being skipped.
 
-## How a release is verified
+## Verifying releases
 
 Three checks stand between a patch and a published release, and none of them claims more than it measures:
 
@@ -181,32 +177,35 @@ A failed check fails the build and produces no artifacts, so a half-patched rele
 
 ## Building a fork
 
-This repository can be forked into a build of your own: the application id, the download endpoints and the manifest URLs are all derived from the current repository, so no code changes are needed — only repository variables and secrets.
+This repository can be forked into a build of your own: the coexisting build's application id, the download endpoints and the manifest URLs are all derived from the current repository, so no code changes are needed — only repository variables and secrets.
 
 ### Variables and secrets to configure
 
 | Name | Kind | Required | Purpose |
 | --- | --- | --- | --- |
-| `READEST_COEXIST_IDENTIFIER` | Repository variable | No | Application id for the coexisting Android build. Defaults to `com.<owner>.readest.unlocked`, derived from the repository owner (characters such as hyphens are dropped). Set it explicitly to publish your own coexisting build without colliding with this project or another fork. |
+| `READEST_COEXIST_IDENTIFIER` | Repository variable | No | Application id for the coexisting Android build. Defaults to `com.<owner>.readest.unlocked`, derived from the repository owner with non-alphanumeric characters dropped (for example `fork-owner` → `com.forkowner.readest.unlocked`). Set it explicitly to publish your own coexisting build without colliding with this project or another fork. |
 | `READEST_UNLOCKED_UPDATER_PUBKEY` | Repository variable | Yes | Public half of the Tauri updater key. Without it the build keeps this project's public key and your update packages will fail signature verification. |
 | `TAURI_SIGNING_PRIVATE_KEY` | Secret | Yes | Private half of the Tauri updater key. |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Secret | Yes | Password for that private key. |
 | `ANDROID_KEY_ALIAS` | Secret | When building Android | Android signing key alias. |
 | `ANDROID_KEY_PASSWORD` | Secret | When building Android | Android signing key password. |
-| `ANDROID_KEY_BASE64` | Secret | When building Android | The whole keystore, base64-encoded. Without it the Android legs are skipped and the other platforms still build. |
+| `ANDROID_KEY_BASE64` | Secret | When building Android | The whole keystore, base64-encoded. Without it the Android build is skipped and the other platforms still build. |
 
-The replacing Android build keeps upstream's id `com.bilingify.readest` on purpose — only that id can install over the official app. Use the coexisting build (with `READEST_COEXIST_IDENTIFIER`) to install next to it or to carry your own identity.
+The replacing Android build keeps upstream's id `com.bilingify.readest` on purpose — only that id can install over the official app. Use the coexisting build to install next to it or to carry your own application id: it is set by `READEST_COEXIST_IDENTIFIER`, whose default is `com.<owner>.readest.unlocked` with non-alphanumeric characters dropped (for example `fork-owner` → `com.forkowner.readest.unlocked`).
 
 ### Generate the Tauri updater key
 
-On a machine that has the upstream Node dependencies:
+On a machine with Rust and the Tauri CLI (`cargo install tauri-cli --version "^2"` to install it), or with the upstream repository cloned and its dependencies installed under `apps/readest-app` (then use `pnpm tauri`):
 
 ```bash
-cd apps/readest-app
-pnpm tauri signer generate -w ~/.tauri/readest-unlocked.key
+# Either command; the key is written to the current directory so a non-expanding
+# `~` in PowerShell cannot get in the way.
+tauri signer generate -w readest-unlocked.key
+# or
+pnpm tauri signer generate -w readest-unlocked.key
 ```
 
-Put the contents of `~/.tauri/readest-unlocked.key.pub` into `READEST_UNLOCKED_UPDATER_PUBKEY`, the private key file into `TAURI_SIGNING_PRIVATE_KEY`, and the password you chose into `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The private key belongs in secrets only.
+Put the contents of `readest-unlocked.key.pub` into `READEST_UNLOCKED_UPDATER_PUBKEY`, the private key file into `TAURI_SIGNING_PRIVATE_KEY`, and the password you chose into `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The private key belongs in secrets only.
 
 ### Generate the Android key
 
@@ -224,7 +223,7 @@ Put the base64 output into `ANDROID_KEY_BASE64`, and the alias and password into
 
 After that, the flow is the same as this repository: push `topic/*` for a full-matrix dry run, merge into `dev`, then `main`, and trigger a numbered release (`-f force=true`) or a Nightly Build (`-f nightly=true`) by hand. The 03:00 / 04:00 UTC schedules also build automatically.
 
-A fork does not inherit this repository's secrets or variables, and Actions may not be enabled — check that it is before the first push, and fill in the variables and secrets above. The iOS artifact is still an unsigned IPA you sign yourself, and the Windows portable build does not update itself.
+A fork does not inherit this repository's secrets or variables, and Actions is disabled on forks by default — enable it in the repository settings before the first push, and fill in the variables and secrets above. The iOS artifact is still an unsigned IPA you sign yourself, and the Windows portable build does not update itself.
 
 ## What's in this repository
 
@@ -250,6 +249,8 @@ The published binaries keep upstream's copyright notices, license text and proje
 
 This project is not affiliated with, endorsed by or supported by Readest or Bilingify LLC. "Readest" and its logo belong to their owners and are used here only to describe what this build is derived from. Support for this build comes from this repository, not from upstream.
 
-If this build is useful to you, upstream is the thing worth supporting: Readest is an actively developed reader with real infrastructure behind it, and its plans are what pay for that. Nothing here changes the deal for anyone using readest.com — the unlock applies only to builds from this repository, and the same features are already free to anyone running their own server. Bugs in reading, syncing or the reader UI belong in [upstream's tracker](https://github.com/readest/readest/issues); a problem with these builds themselves — a download that misbehaves, a release that failed — belongs here.
+If this build is useful to you, upstream is the thing worth supporting: Readest is an actively developed reader with real infrastructure behind it, and its plans are what pay for that. Nothing here changes the deal for anyone using readest.com — the unlock applies only to builds from this repository, and the same features are already free to anyone running their own server.
+
+Bugs in reading, syncing or the reader UI belong in [upstream's tracker](https://github.com/readest/readest/issues); a problem with these builds themselves — a corrupted or unopenable installer, an APK or IPA that will not install, a dead download link, a checksum or attestation that does not match, a release that failed — belongs here.
 
 These builds are provided as-is, with no warranty, for personal use. You are responsible for complying with the licenses and terms of any third-party service the app talks to.
