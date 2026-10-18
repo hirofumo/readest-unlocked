@@ -19,9 +19,10 @@ The first five features run through the same client-side entitlement check. Thes
 | Audiobookshelf offline downloads | Audiobookshelf books and audiobooks can be stored on the device for offline use. |
 | Trusted-device pairing | Nearby BookDrop transfers no longer ask for confirmation for each individual transfer. |
 | Custom translators | Translation through your own OpenAI-compatible endpoint or your own DeepL key. |
-| Self-hosted server | A new **Self-hosted** entry (Settings → Custom → Self-hosted) points the app at your own Readest server. This one is an added entry, not part of the entitlement check above. |
 
 No account is needed for any of this: with no signed-in user the app keeps a local library, and syncing can go to WebDAV or an S3-compatible bucket — both are third-party sync.
+
+Upstream already supports self-hosted servers but does not expose a configuration entry; this build adds a **Self-hosted** entry (Settings → Custom → Self-hosted) that points the app at your own Readest server. It is an added entry, not part of the client-side entitlement check above.
 
 ### Not unlocked
 
