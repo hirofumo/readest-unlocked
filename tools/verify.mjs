@@ -325,6 +325,15 @@ if (miscPanel === null) {
       normalized.includes("htmlFor='selfHostedServerUrl'") && normalized.includes('draftAnonKey'),
     ],
     [
+      'the anon-key field is masked, with the WebDAV panel’s visibility toggle',
+      normalized.includes("type={showAnonKey ? 'text' : 'password'}") &&
+        normalized.includes('pe-11') &&
+        normalized.includes('MdVisibility') &&
+        normalized.includes('MdVisibilityOff') &&
+        normalized.includes("_('Show password')") &&
+        normalized.includes("_('Hide password')"),
+    ],
+    [
       'Android Back steps out of the sub-page',
       normalized.includes('useKeyDownActions') && normalized.includes('showSelfHosted'),
     ],

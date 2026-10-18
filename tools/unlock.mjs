@@ -502,6 +502,10 @@ export const getRuntimeConfig = (): ReadestRuntimeConfig | undefined => {
  * configured it is that panel's connect form (filled Connect button, probe,
  * toasts), and once one is it is the connected view with a Disconnect button.
  *
+ * The anon-key field is a secret, so it is masked by default and carries the
+ * WebDAV panel's eye toggle — the same icons, the same aria-label, the same
+ * button treatment — because the key sits on screen while a server is set up.
+ *
  * `SENTINEL_SELF_HOSTED` marks the generated page and `PANEL_STATE_SENTINEL` the
  * state block; together they are both the "already patched" test and how a tree
  * carrying an earlier revision of this patch is recognised instead of being
@@ -509,6 +513,11 @@ export const getRuntimeConfig = (): ReadestRuntimeConfig | undefined => {
  */
 const SENTINEL_SELF_HOSTED = `{/* ${MARKER} self-hosted sub-page, reached from the Custom list like Integrations → WebDAV */}`;
 const PANEL_STATE_SENTINEL = `  // ${MARKER} self-hosted server override`;
+
+/** Upstream's react import, which gains the WebDAV panel's eye icons. */
+const PANEL_ICONS_ANCHOR = `import React, { useEffect, useRef, useState } from 'react';`;
+const PANEL_ICONS = `import React, { useEffect, useRef, useState } from 'react';
+import { MdVisibility, MdVisibilityOff } from 'react-icons/md';`;
 
 /** Upstream's import line, which the panel's new row and page extend. */
 const PANEL_IMPORT_ANCHOR = `import { BoxedList } from './primitives';`;
@@ -535,6 +544,8 @@ const PANEL_STATE_BLOCK = `  // ${MARKER} self-hosted server override. The addre
       ? ''
       : (window.localStorage?.getItem('${SERVER_ANON_KEY}') ?? ''),
   );
+  // The anon key is a secret: masked by default, with the WebDAV panel's eye toggle.
+  const [showAnonKey, setShowAnonKey] = useState(false);
   const [showSelfHosted, setShowSelfHosted] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   /** Whether the stored server is the active one — the switch Disconnect clears. */
@@ -693,16 +704,39 @@ const PANEL_SUB_PAGE = `  if (showSelfHosted) {
               <SectionTitle as='label' htmlFor='selfHostedAnonKey' className='block'>
                 {_('Supabase anon key (optional)')}
               </SectionTitle>
-              <input
-                id='selfHostedAnonKey'
-                className='input eink-bordered h-11 w-full text-sm focus:outline-hidden'
-                type='text'
-                spellCheck='false'
-                autoCapitalize='off'
-                autoCorrect='off'
-                value={draftAnonKey}
-                onChange={(event) => setDraftAnonKey(event.target.value)}
-              />
+              <div className='relative'>
+                <input
+                  id='selfHostedAnonKey'
+                  className='input eink-bordered h-11 w-full pe-11 text-sm focus:outline-hidden'
+                  type={showAnonKey ? 'text' : 'password'}
+                  spellCheck='false'
+                  autoCapitalize='off'
+                  autoCorrect='off'
+                  autoComplete='off'
+                  value={draftAnonKey}
+                  onChange={(event) => setDraftAnonKey(event.target.value)}
+                />
+                <button
+                  type='button'
+                  onClick={() => setShowAnonKey((v) => !v)}
+                  className={clsx(
+                    'absolute end-2 top-1/2 -translate-y-1/2',
+                    'flex h-8 w-8 items-center justify-center rounded-sm',
+                    'text-base-content/60 hover:text-base-content',
+                    'hover:bg-base-200/60 transition-colors duration-150',
+                    'focus-visible:ring-base-content/15 focus-visible:outline-hidden focus-visible:ring-2',
+                  )}
+                  aria-label={showAnonKey ? _('Hide password') : _('Show password')}
+                  title={showAnonKey ? _('Hide password') : _('Show password')}
+                  tabIndex={-1}
+                >
+                  {showAnonKey ? (
+                    <MdVisibilityOff className='h-4 w-4' />
+                  ) : (
+                    <MdVisibility className='h-4 w-4' />
+                  )}
+                </button>
+              </div>
             </div>
 
             <div className='flex justify-end pt-1'>
@@ -830,8 +864,16 @@ function patchServerUrlSetting(root) {
   // earlier one of those revisions cannot be upgraded in place — its upstream
   // anchors are gone — so it is reported instead of being patched twice.
   if (panelSource.includes(SENTINEL_SELF_HOSTED) && panelSource.includes('const handleConnect =')) {
-    log('MiscPanel.tsx: self-hosted sub-page already present');
-    return;
+    if (panelSource.includes('MdVisibilityOff')) {
+      log('MiscPanel.tsx: self-hosted sub-page already present');
+      return;
+    }
+    fail(
+      'MiscPanel.tsx carries the self-hosted page without the anon-key visibility toggle.\n' +
+        '  Restore the file and run this script again:\n' +
+        `    git -C ${root} checkout -- apps/readest-app/src/components/settings/MiscPanel.tsx\n` +
+        '  (This checkout is for local verification only; CI always starts from upstream.)',
+    );
   }
   if (
     panelSource.includes(SENTINEL_SELF_HOSTED) ||
@@ -846,7 +888,8 @@ function patchServerUrlSetting(root) {
     );
   }
 
-  let panel = replaceOnce(panelSource, PANEL_IMPORT_ANCHOR, PANEL_IMPORTS, 'MiscPanel.tsx/imports');
+  let panel = replaceOnce(panelSource, PANEL_ICONS_ANCHOR, PANEL_ICONS, 'MiscPanel.tsx/icons');
+  panel = replaceOnce(panel, PANEL_IMPORT_ANCHOR, PANEL_IMPORTS, 'MiscPanel.tsx/imports');
 
   const stateAnchor = `  const [inputFocusInAndroid, setInputFocusInAndroid] = useState(false);`;
   const jsxAnchor = `        'settings.custom.readerUiCss',
