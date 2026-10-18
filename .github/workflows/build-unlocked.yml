@@ -141,7 +141,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BUILD: ${{ steps.resolve.outputs.build }}
-          PUBLISH: ${{ steps.resolve.outputs.publish }}
+          # `publish` is a job-level output, not a step output; read the ref here.
+          PUBLISH: ${{ github.ref == 'refs/heads/main' }}
         run: |
           {
             echo "## Unlocked Readest build"
