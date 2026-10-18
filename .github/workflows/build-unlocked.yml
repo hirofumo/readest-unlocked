@@ -191,11 +191,13 @@ jobs:
           SHORT_SHA: ${{ needs.detect.outputs.short_sha }}
           UPSTREAM_SHA: ${{ needs.detect.outputs.upstream_sha }}
           REPO: ${{ github.repository }}
+          UPSTREAM_REF: ${{ needs.detect.outputs.ref }}
           COEXIST_IDENTIFIER: ${{ needs.detect.outputs.coexist_identifier }}
         run: |
           set -euo pipefail
           args=(--mode "$MODE" --version "$VERSION" --prefix "$PREFIX" --tag "$TAG"
-                --repo "$REPO" --coexist-id "$COEXIST_IDENTIFIER" --out release-body.md)
+                --repo "$REPO" --upstream-ref "$UPSTREAM_REF" --upstream-repo "$UPSTREAM_REPO"
+                --coexist-id "$COEXIST_IDENTIFIER" --out release-body.md)
           if [ "$MODE" = "nightly" ]; then
             args+=(--date "$DATE" --short-sha "$SHORT_SHA" --upstream-sha "$UPSTREAM_SHA")
           fi

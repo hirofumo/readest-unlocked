@@ -72,6 +72,8 @@ const coexistId = arg('coexist-id', '') || defaultCoexistId;
 const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
 const file = (suffix) => `[${prefix}-${suffix}](${baseUrl}/${prefix}-${suffix})`;
 const shortCommit = upstreamSha ? upstreamSha.slice(0, 12) : shortSha;
+const upstreamRef = arg('upstream-ref', '') || `v${version}`;
+const upstreamRepo = arg('upstream-repo', 'readest/readest');
 
 /* ------------------------------------------------------------------ sections */
 
@@ -85,9 +87,11 @@ const intro =
         `The unlocked patch is applied on top of upstream \`main\`; the files are named \`Readest-<date>-<upstream commit>-...\` so two builds cannot be confused.`,
       ]
     : [
-        `**Unlocked build of Readest ${version}.** The client-side premium gates are removed: third-party cloud sync (WebDAV, S3-compatible storage, Google Drive, OneDrive, iCloud Drive), per-chapter read-aloud audio download, Audiobookshelf offline downloads, trusted-device pairing, and custom translators. The app also gains a Self-hosted entry (Settings → Custom → Self-hosted) for pointing it at your own Readest server.`,
+        `**Numbered release** — Readest ${version}, built from upstream tag [\`${upstreamRef}\`](https://github.com/${upstreamRepo}/tree/${upstreamRef}).`,
         '',
-        'Readest Cloud storage quota, the daily AI translation quota and the Send-to-Readest email address are still decided by the upstream service and are not unlocked by this build.',
+        'This is the numbered release of the current Readest tree. It is the stable channel, and the app updates itself in place — except the Windows portable zip and the iOS IPA, which are described below.',
+        '',
+        `The unlocked patch is applied on top of upstream tag \`${upstreamRef}\`; the files are named \`Readest-${version}-<platform>-...\`.`,
       ];
 
 const windowsTable = [
