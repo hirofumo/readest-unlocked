@@ -74,7 +74,7 @@ The artifacts are not signed by a code-signing certificate.
 - **Windows**: SmartScreen warns on first run. The installer updates itself; the portable zip does not.
 - **macOS**: Gatekeeper blocks the first launch. Run `xattr -cr /Applications/Readest.app`, then open the app again.
 - **Android**: see [the two families](#the-two-android-families) below before choosing an APK.
-- **iOS**: the IPA is unsigned, so it has to be signed with your own Apple ID before it installs — see [the iOS build](#the-ios-build-is-unsigned) below, including what a free Apple ID cannot do.
+- **iOS**: the IPA is unsigned, so it has to be signed with your own Apple ID before it installs — see [the iOS artifacts](#ios-artifacts) below, including what a free Apple ID cannot do.
 - **Android, updating automatically**: the asset names are stable, so
   [Obtainium](https://github.com/ImranR98/Obtainium) can follow this repository
   directly — add `https://github.com/hirofumo/readest-unlocked` as a GitHub
@@ -101,7 +101,7 @@ On the desktop the position is different: those builds also keep upstream's iden
 
 **Which APK, and what updates itself.** The four ABIs are published separately: `arm64-v8a` for current phones and tablets, `armeabi-v7a` for older 32-bit ARM devices, and `x86_64` / `x86` for emulators and x86 hardware. Each family is the same app under a different application id, so pick the family first and the ABI second. In-app updates work on every ABI: the app asks for the manifest key matching the device (`android-arm64`, `android-armv7`, `android-x86_64`, `android-x86`) and each manifest carries all four, each pointing at the package built for that ABI. That key mapping is part of this build's patch — an unpatched upstream build maps aarch64 to `android-arm64`, arm to `android-armv7` and every other arch to `android-legacy`, a key this project never publishes, so `x86_64` and `x86` devices would be offered no update at all.
 
-### The iOS build is unsigned
+### iOS artifacts
 
 This repository has no Apple certificate, so the iOS asset is an honestly **unsigned** IPA: on its own it installs nothing. It is the app, archived for arm64 devices and packaged as `Payload/Readest.app`, and signing it is your side of the job — AltStore, SideStore, Sideloadly or Xcode, with your own Apple ID and provisioning profile.
 
@@ -109,7 +109,7 @@ What the resulting install can do depends on the account you sign with. App Grou
 
 **None of this has been verified on a device from CI.** What the build proves is that the package is structurally correct — see [How a release is verified](#how-a-release-is-verified) — not that it installs or runs. Treat the first device install as your own test.
 
-### The daily Nightly Build
+### Nightly Build
 
 Besides the numbered releases, this repository builds a pre-release from upstream
 `main` once a day and publishes it to a single rolling `NightlyBuild` release. Its
@@ -162,7 +162,7 @@ Each release publishes a signed updater manifest — `latest.json` for the repla
 
 ## How releases are produced
 
-Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>`; a day without a new upstream version costs nothing but that check. A separate daily Nightly Build (see [The daily Nightly Build](#the-daily-nightly-build)) builds a pre-release from upstream `main`. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
+Upstream is checked once a day. When it publishes a version that has no release here yet, that version is built for every platform above and published as `v<V>`; a day without a new upstream version costs nothing but that check. A separate daily Nightly Build (see [Nightly Build](#nightly-build)) builds a pre-release from upstream `main`. A rebuild can also be triggered by hand, optionally pinned to a specific upstream tag, branch or commit.
 
 Every release comes out of the same recipe: check the upstream tag out, apply the patch scripts in `tools/`, assert the patched sources, build, assert the built bundle, then read every package back before uploading it.
 
