@@ -1,4 +1,4 @@
-# Readest 解锁版构建
+# Readest 解锁版
 
 [English](README.md) | 中文
 

@@ -1,4 +1,4 @@
-# Readest Unlocked Build
+# Readest Unlocked
 
 English | [中文](README.zh-CN.md)
 

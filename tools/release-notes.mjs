@@ -7,9 +7,12 @@
  * release page is opened to answer. The channels differ only in what they are:
  *
  *   release    the numbered release, `v<version>`, with in-app updates
- *   nightly  the daily pre-release of upstream `main`, on the rolling
+ *   nightly    the daily Nightly Build of upstream `main`, on the rolling
  *              `NightlyBuild` tag, replaced on every build and never published to
  *              the updater's `latest.json`
+ *
+ * Paragraphs are written as single lines on purpose: GitHub renders a release
+ * body as Markdown, and a hand-wrapped sentence is noise in the rendered page.
  *
  * Usage:
  *   node tools/release-notes.mjs --mode release --version 0.12.16 \
@@ -70,29 +73,16 @@ const shortCommit = upstreamSha ? upstreamSha.slice(0, 12) : shortSha;
 const intro =
   mode === 'nightly'
     ? [
-        `**Pre-release** — built from upstream \`main\` at [\`${shortCommit}\`]` +
-          `(https://github.com/readest/readest/commit/${upstreamSha}) on ${date}.`,
+        `**Pre-release** — built from upstream \`main\` at [\`${shortCommit}\`](https://github.com/readest/readest/commit/${upstreamSha}) on ${date}.`,
         '',
-        'This is the daily, rolling build of the next Readest tree. It is replaced',
-        'by the next Nightly Build and may be unstable. Turn on **Settings → Control →',
-        'Nightly Builds** to receive these builds through the in-app updater;',
-        'otherwise download a new build here. Windows portable builds do not update',
-        'in place.',
+        'This is the daily, rolling build of the next Readest tree. It is replaced by the next Nightly Build and may be unstable. Turn on **Settings → Control → Nightly Builds** to receive these builds through the in-app updater; otherwise download a new build here. Windows portable builds do not update in place.',
         '',
-        `The unlocked patch is applied on top of upstream \`main\`; the files are` +
-          ' named `Readest-<date>-<upstream commit>-...` so two builds cannot be confused.',
+        `The unlocked patch is applied on top of upstream \`main\`; the files are named \`Readest-<date>-<upstream commit>-...\` so two builds cannot be confused.`,
       ]
     : [
-        `**Unlocked build of Readest ${version}.** The client-side premium gates are`,
-        'removed: third-party cloud sync (WebDAV, S3-compatible storage, Google Drive,',
-        'OneDrive, iCloud Drive), per-chapter read-aloud audio download, Audiobookshelf',
-        'offline downloads, trusted-device pairing, and custom translators. The app also',
-        'gains a Self-hosted entry (Settings → Custom → Self-hosted) for pointing it at',
-        'your own Readest server.',
+        `**Unlocked build of Readest ${version}.** The client-side premium gates are removed: third-party cloud sync (WebDAV, S3-compatible storage, Google Drive, OneDrive, iCloud Drive), per-chapter read-aloud audio download, Audiobookshelf offline downloads, trusted-device pairing, and custom translators. The app also gains a Self-hosted entry (Settings → Custom → Self-hosted) for pointing it at your own Readest server.`,
         '',
-        'Readest Cloud storage quota, the daily AI translation quota and the',
-        'Send-to-Readest email address are still decided by the upstream service and are',
-        'not unlocked by this build.',
+        'Readest Cloud storage quota, the daily AI translation quota and the Send-to-Readest email address are still decided by the upstream service and are not unlocked by this build.',
       ];
 
 const windowsTable = [
@@ -105,8 +95,7 @@ const windowsTable = [
   `| ${file('windows-x64-portable.zip')} | Portable x64 build; unzip and run. It does not update itself. |`,
   `| ${file('windows-arm64-portable.zip')} | Portable arm64 build; unzip and run. No self-update. |`,
   '',
-  'The `.sig` files next to the installers are updater signatures. The app',
-  'downloads them itself; you do not need to save them by hand.',
+  'The `.sig` files next to the installers are updater signatures. The app downloads them itself; you do not need to save them by hand.',
 ].join('\n');
 
 const macosTable = [
@@ -117,8 +106,7 @@ const macosTable = [
   `| ${file('macos-x64.dmg')} | Intel Macs. |`,
   `| ${file('macos-arm64.dmg')} | Apple silicon (M-series). |`,
   '',
-  'The `-updater.tar.gz` archives are what the in-app updater downloads. Install',
-  'from the dmg.',
+  'The `-updater.tar.gz` archives are what the in-app updater downloads. Install from the dmg.',
 ].join('\n');
 
 const linuxTable = [
@@ -133,9 +121,7 @@ const linuxTable = [
   `| ${file('linux-x64.rpm')} | Fedora, RHEL and derivatives (x64). |`,
   `| ${file('linux-arm64.rpm')} | Fedora, RHEL and derivatives (arm64). |`,
   '',
-  'Install a deb with `sudo apt install ./<file>.deb`, an rpm with',
-  '`sudo dnf install ./<file>.rpm`, or make an AppImage executable with',
-  '`chmod +x <file>.AppImage` and run it.',
+  'Install a deb with `sudo apt install ./<file>.deb`, an rpm with `sudo dnf install ./<file>.rpm`, or make an AppImage executable with `chmod +x <file>.AppImage` and run it.',
 ].join('\n');
 
 const androidTable = [
@@ -143,15 +129,10 @@ const androidTable = [
   '',
   'There are two builds, and they can both be installed on the same device:',
   '',
-  '- **Replacing** (`com.bilingify.readest`) — the same identity as the official',
-  '  app. Uninstall the official Readest first; its app-local data is cleared unless',
-  '  you restore it from a backup.',
-  '- **Coexisting** (`com.hirofumo.readest.unlocked`) — installs next to the official',
-  '  app and starts with an empty library.',
+  '- **Replacing** (`com.bilingify.readest`) — the same identity as the official app. Uninstall the official Readest first; its app-local data is cleared unless you restore it from a backup.',
+  '- **Coexisting** (`com.hirofumo.readest.unlocked`) — installs next to the official app and starts with an empty library.',
   '',
-  'Pick the ABI that matches the device: `arm64-v8a` for current phones and',
-  'tablets, `armeabi-v7a` for older 32-bit ARM devices, and `x86_64` / `x86` for',
-  'emulators and x86 hardware.',
+  'Pick the ABI that matches the device: `arm64-v8a` for current phones and tablets, `armeabi-v7a` for older 32-bit ARM devices, and `x86_64` / `x86` for emulators and x86 hardware.',
   '',
   '| File | Use it for |',
   '| --- | --- |',
@@ -164,8 +145,7 @@ const androidTable = [
   `| ${file('android-coexist-x86_64.apk')} | Coexisting build, x86_64. |`,
   `| ${file('android-coexist-x86.apk')} | Coexisting build, x86. |`,
   '',
-  'Each family updates itself in place. The two families have different',
-  'application IDs and cannot update each other.',
+  'Each family updates itself in place. The two families have different application IDs and cannot update each other.',
 ].join('\n');
 
 const iosRow = [
@@ -175,11 +155,7 @@ const iosRow = [
   '| --- | --- |',
   `| ${file('ios-arm64.ipa')} | iPhone and iPad (arm64). **Unsigned** — sign it with your own Apple ID before installing. |`,
   '',
-  'Use AltStore, SideStore, Sideloadly or Xcode with your own provisioning',
-  'profile. A free Apple ID cannot use App Groups, so the reading widget and the',
-  'share extension will be degraded or unavailable; both need a paid team. The',
-  'bundle ID is `com.bilingify.readest`, so installing over an App Store copy',
-  'requires removing that copy first.',
+  'Use AltStore, SideStore, Sideloadly or Xcode with your own provisioning profile. A free Apple ID cannot use App Groups, so the reading widget and the share extension will be degraded or unavailable; both need a paid team. The bundle ID is `com.bilingify.readest`, so installing over an App Store copy requires removing that copy first.',
 ].join('\n');
 
 const verify = [
@@ -193,37 +169,25 @@ const verify = [
   'sha256sum -c SHA256SUMS --ignore-missing',
   '```',
   '',
-  'A matching checksum proves the file arrived intact, not where it came from.',
-  'For that, check the build provenance attestation:',
+  'A matching checksum proves the file arrived intact, not where it came from. For that, check the build provenance attestation:',
   '',
   '```bash',
   `gh attestation verify ${prefix}-windows-x64-setup.exe --repo ${repo}`,
   '```',
   '',
-  'The command succeeds only for a file produced by a workflow run in this',
-  'repository, and it prints the commit and run that produced it. It does not',
-  'claim the code is harmless — read `unlock.patch` for that.',
+  'The command succeeds only for a file produced by a workflow run in this repository, and it prints the commit and run that produced it. It does not claim the code is harmless — read `unlock.patch` for that.',
 ].join('\n');
 
 const about = [
   '## About this build',
   '',
   mode === 'nightly'
-    ? 'This pre-release is upstream Readest `main` plus the patch scripts in this' +
-      ' repository. The complete diff ships as `unlock.patch`, and `BUILD.md` records' +
-      ' the exact upstream and recipe commits. It is rebuilt daily from upstream' +
-      ' `main`; with Settings → Control → Nightly Builds enabled, the app follows' +
-      ' this channel automatically. The numbered release is the stable channel.'
-    : 'This is upstream Readest plus the patch scripts in this repository. The' +
-      ' complete diff ships as `unlock.patch`, and `BUILD.md` records the exact' +
-      ' upstream and recipe commits. Nothing is patched at runtime.',
+    ? 'This pre-release is upstream Readest `main` plus the patch scripts in this repository. The complete diff ships as `unlock.patch`, and `BUILD.md` records the exact upstream and recipe commits. It is rebuilt daily from upstream `main`; with Settings → Control → Nightly Builds enabled, the app follows this channel automatically. The numbered release is the stable channel.'
+    : 'This is upstream Readest plus the patch scripts in this repository. The complete diff ships as `unlock.patch`, and `BUILD.md` records the exact upstream and recipe commits. Nothing is patched at runtime.',
   '',
-  'Readest is licensed under **AGPL-3.0**, and so are these builds and the scripts',
-  'that produce them.',
+  'Readest is licensed under **AGPL-3.0**, and so are these builds and the scripts that produce them.',
   '',
-  'The binaries are not code-signed with a platform certificate. Windows',
-  'SmartScreen and macOS Gatekeeper will warn on first launch. On macOS, clear the',
-  'quarantine flag and open the app again:',
+  'The binaries are not code-signed with a platform certificate. Windows SmartScreen and macOS Gatekeeper will warn on first launch. On macOS, clear the quarantine flag and open the app again:',
   '',
   '```bash',
   'xattr -cr /Applications/Readest.app',
@@ -235,8 +199,7 @@ const parts = [
   '',
   '## Download and install',
   '',
-  'Pick the file that matches your platform and architecture. Every file in this',
-  'release was built from the same upstream commit and the same patch recipe.',
+  'Pick the file that matches your platform and architecture. Every file in this release was built from the same upstream commit and the same patch recipe.',
   '',
   windowsTable,
   '',
