@@ -77,9 +77,8 @@ The artifacts are not signed by a platform code-signing certificate; the updater
 
 - **Windows**: SmartScreen warns on first run. The installer updates itself; the portable zip does not.
 - **macOS**: Gatekeeper blocks the first launch. Run `xattr -cr /Applications/Readest.app`, then open the app again.
-- **Android**: see [the two families](#the-two-android-families) below before choosing an APK.
+- **Android**: there are two packages; see [the two families](#the-two-android-families) below.
 - **iOS**: the IPA is unsigned, so it has to be signed with your own Apple ID before it installs — see [the iOS artifacts](#ios-artifacts) below, including what a free Apple ID cannot do.
-- **Android, updating automatically**: the asset names are stable, so [Obtainium](https://github.com/ImranR98/Obtainium) can follow this repository directly — add `https://github.com/hirofumo/readest-unlocked` as a GitHub source and narrow it to the APK you installed, for example `Readest-[\d.]+-android-replace-arm64-v8a\.apk` or `Readest-[\d.]+-android-coexist-armeabi-v7a\.apk`. Pick the regex that matches the family and the ABI already on the device: the two families have different application ids and cannot update each other.
 
 #### The two Android families
 

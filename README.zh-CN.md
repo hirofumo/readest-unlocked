@@ -81,9 +81,8 @@ Windows 安装包和 Linux AppImage 同时充当安装包与更新包——更�
 
 - **Windows**：首次运行会被 SmartScreen 警告一次；便携版 zip 不能自更新，想要更新就用安装包。
 - **macOS**：首次打开会被 Gatekeeper 拦下。执行 `xattr -cr /Applications/Readest.app`，然后再打开一次。
-- **Android**：挑 APK 之前先看下面的 [Android 替换版与并存版](#android-替换版与并存版)。
+- **Android**：存在两种包，见下面的 [Android 替换版与并存版](#android-替换版与并存版)。
 - **iOS**：IPA 未签名，必须先用你自己的 Apple ID 签名才能安装——见下面的 [iOS 产物](#ios-产物)，里面也写了免费 Apple ID 做不到哪些事。
-- **Android 自更新**：产物命名是稳定的，[Obtainium](https://github.com/ImranR98/Obtainium) 可以直接跟随本仓库——把 `https://github.com/hirofumo/readest-unlocked` 添加为 GitHub 源，再用正则限定到已安装的那个 APK，例如 `Readest-[\d.]+-android-replace-arm64-v8a\.apk` 或 `Readest-[\d.]+-android-coexist-armeabi-v7a\.apk`。正则里的家族（replace / coexist）和 ABI 都要跟设备上已安装的那个包对上：两个家族的应用 ID 不同，不能互相更新。
 
 #### Android 替换版与并存版
 
