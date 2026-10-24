@@ -213,10 +213,14 @@ jobs:
           MODE: ${{ needs.detect.outputs.mode }}
           TAG: ${{ needs.detect.outputs.tag }}
           VERSION: ${{ needs.detect.outputs.version }}
+          DATE: ${{ needs.detect.outputs.date }}
         run: |
           set -euo pipefail
 
           if [ "$MODE" = "nightly" ]; then
+            # The title carries the build date so the rolling release page shows
+            # which day's build it holds. Same dotted form as the asset names.
+            title="Readest Nightly Build $DATE"
             if gh release view "$TAG" >/dev/null 2>&1; then
               # Replaced wholesale: the asset names carry the build date and the
               # upstream commit, so a new build would otherwise leave the
@@ -226,12 +230,12 @@ jobs:
                   gh release delete-asset "$TAG" "$name" --yes
                 done
               gh release edit "$TAG" \
-                --title "Readest Nightly Build" \
+                --title "$title" \
                 --notes-file release-body.md \
                 --prerelease
             else
               gh release create "$TAG" \
-                --title "Readest Nightly Build" \
+                --title "$title" \
                 --notes-file release-body.md \
                 --prerelease \
                 --target "$GITHUB_SHA"

@@ -15,7 +15,7 @@
  *
  *   release   — tag `v<version>`, assets `Readest-<version>-...`. This is the
  *               numbered release, and it is the build the in-app updater follows.
- *   nightly — tag `Nightly Build`, assets `Readest-<date>-<short sha>-...`, marked
+ *   nightly — tag `NightlyBuild`, assets `Readest-<date>-<short sha>-...`, marked
  *               as a pre-release. It is built from upstream `main` every day and
  *               publishes its own `nightly.json`, never `latest.json`.
  *

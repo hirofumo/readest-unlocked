@@ -2,9 +2,10 @@
 /**
  * Writes the release body: an English download-and-install guide.
  *
- * Both release channels share one structure — a per-platform table of the files
- * in this release and what each one is for — because that is the question a
- * release page is opened to answer. The channels differ only in what they are:
+ * Both release channels share one structure — per-platform download sections,
+ * each variant on its own line with one row of architecture links — because
+ * that is the question a release page is opened to answer. The channels differ
+ * only in what they are:
  *
  *   release    the numbered release, `v<version>`, with in-app updates
  *   nightly    the daily Nightly Build of upstream `main`, on the rolling
@@ -70,7 +71,10 @@ const defaultCoexistId = `com.${
 }.readest.unlocked`;
 const coexistId = arg('coexist-id', '') || defaultCoexistId;
 const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
-const file = (suffix) => `[${prefix}-${suffix}](${baseUrl}/${prefix}-${suffix})`;
+// A variant line offers one file per architecture as a row of links, so the
+// whole download section reads as "variant → your CPU" without a table.
+const link = (label, suffix) => `[${label}](${baseUrl}/${prefix}-${suffix})`;
+const archRow = (entries) => entries.map(([label, suffix]) => link(label, suffix)).join(' | ');
 const shortCommit = upstreamSha ? upstreamSha.slice(0, 12) : shortSha;
 const upstreamRef = arg('upstream-ref', '') || `v${version}`;
 const upstreamRepo = arg('upstream-repo', 'readest/readest');
@@ -94,75 +98,101 @@ const intro =
         `The unlocked patch is applied on top of upstream tag \`${upstreamRef}\`; the files are named \`Readest-${version}-<platform>-...\`.`,
       ];
 
-const windowsTable = [
+const windowsSection = [
   '### Windows',
   '',
-  '| File | Use it for |',
-  '| --- | --- |',
-  `| ${file('windows-x64-setup.exe')} | Windows 10/11 on Intel or AMD (x64). Installs Readest and supports in-app updates. |`,
-  `| ${file('windows-arm64-setup.exe')} | Windows on ARM (arm64). Same installer and update support. |`,
-  `| ${file('windows-x64-portable.zip')} | Portable x64 build; unzip and run. It does not update itself. |`,
-  `| ${file('windows-arm64-portable.zip')} | Portable arm64 build; unzip and run. No self-update. |`,
+  '**Installer** — installs Readest and updates itself in place.',
+  '',
+  archRow([
+    ['AMD64', 'windows-x64-setup.exe'],
+    ['ARM64', 'windows-arm64-setup.exe'],
+  ]),
+  '',
+  '**Portable** — unzip and run. It does not update itself.',
+  '',
+  archRow([
+    ['AMD64', 'windows-x64-portable.zip'],
+    ['ARM64', 'windows-arm64-portable.zip'],
+  ]),
   '',
   'The `.sig` files next to the installers are updater signatures. The app downloads them itself; you do not need to save them by hand.',
 ].join('\n');
 
-const macosTable = [
+const macosSection = [
   '### macOS',
   '',
-  '| File | Use it for |',
-  '| --- | --- |',
-  `| ${file('macos-x64.dmg')} | Intel Macs. |`,
-  `| ${file('macos-arm64.dmg')} | Apple silicon (M-series). |`,
+  '**Disk image** — install from the dmg; the app updates itself in place.',
+  '',
+  archRow([
+    ['Intel', 'macos-x64.dmg'],
+    ['Apple Silicon', 'macos-arm64.dmg'],
+  ]),
   '',
   'The `-updater.tar.gz` archives are what the in-app updater downloads. Install from the dmg.',
 ].join('\n');
 
-const linuxTable = [
+const linuxSection = [
   '### Linux',
   '',
-  '| File | Use it for |',
-  '| --- | --- |',
-  `| ${file('linux-x64.AppImage')} | Portable x64 build for any distribution. Supports in-app updates. |`,
-  `| ${file('linux-arm64.AppImage')} | Portable arm64 build. Supports in-app updates. |`,
-  `| ${file('linux-x64.deb')} | Debian, Ubuntu and derivatives (x64). |`,
-  `| ${file('linux-arm64.deb')} | Debian, Ubuntu and derivatives (arm64). |`,
-  `| ${file('linux-x64.rpm')} | Fedora, RHEL and derivatives (x64). |`,
-  `| ${file('linux-arm64.rpm')} | Fedora, RHEL and derivatives (arm64). |`,
+  '**AppImage** — portable build for any distribution. Supports in-app updates.',
+  '',
+  archRow([
+    ['x86-64', 'linux-x64.AppImage'],
+    ['ARM64', 'linux-arm64.AppImage'],
+  ]),
+  '',
+  '**Deb** — Debian, Ubuntu and derivatives.',
+  '',
+  archRow([
+    ['x86-64', 'linux-x64.deb'],
+    ['ARM64', 'linux-arm64.deb'],
+  ]),
+  '',
+  '**RPM** — Fedora, RHEL and derivatives.',
+  '',
+  archRow([
+    ['x86-64', 'linux-x64.rpm'],
+    ['ARM64', 'linux-arm64.rpm'],
+  ]),
   '',
   'Install a deb with `sudo apt install ./<file>.deb`, an rpm with `sudo dnf install ./<file>.rpm`, or make an AppImage executable with `chmod +x <file>.AppImage` and run it.',
 ].join('\n');
 
-const androidTable = [
+const androidSection = [
   '### Android',
   '',
   'There are two builds, and they can both be installed on the same device:',
   '',
-  '- **Replacing** (`com.bilingify.readest`) — the same identity as the official app. Uninstall the official Readest first; its app-local data is cleared unless you restore it from a backup.',
+  `- **Replacing** (\`com.bilingify.readest\`) — the same identity as the official app. Uninstall the official Readest first; its app-local data is cleared unless you restore it from a backup.`,
   `- **Coexisting** (\`${coexistId}\`) — installs next to the official app and starts with an empty library.`,
   '',
-  'Pick the ABI that matches the device: `arm64-v8a` for current phones and tablets, `armeabi-v7a` for older 32-bit ARM devices, and `x86_64` / `x86` for emulators and x86 hardware.',
-  '',
-  '| File | Use it for |',
-  '| --- | --- |',
-  `| ${file('android-replace-arm64-v8a.apk')} | Replacing build, arm64-v8a. |`,
-  `| ${file('android-replace-armeabi-v7a.apk')} | Replacing build, armeabi-v7a. |`,
-  `| ${file('android-replace-x86_64.apk')} | Replacing build, x86_64. |`,
-  `| ${file('android-replace-x86.apk')} | Replacing build, x86. |`,
-  `| ${file('android-coexist-arm64-v8a.apk')} | Coexisting build, arm64-v8a. |`,
-  `| ${file('android-coexist-armeabi-v7a.apk')} | Coexisting build, armeabi-v7a. |`,
-  `| ${file('android-coexist-x86_64.apk')} | Coexisting build, x86_64. |`,
-  `| ${file('android-coexist-x86.apk')} | Coexisting build, x86. |`,
-  '',
   'Each family updates itself in place. The two families have different application IDs and cannot update each other.',
+  '',
+  '**Replacing** — arm64-v8a for current phones and tablets, armeabi-v7a for older 32-bit ARM devices, x86_64 / x86 for emulators and x86 hardware.',
+  '',
+  archRow([
+    ['arm64-v8a', 'android-replace-arm64-v8a.apk'],
+    ['armeabi-v7a', 'android-replace-armeabi-v7a.apk'],
+    ['x86_64', 'android-replace-x86_64.apk'],
+    ['x86', 'android-replace-x86.apk'],
+  ]),
+  '',
+  '**Coexisting** — same ABIs, its own application ID.',
+  '',
+  archRow([
+    ['arm64-v8a', 'android-coexist-arm64-v8a.apk'],
+    ['armeabi-v7a', 'android-coexist-armeabi-v7a.apk'],
+    ['x86_64', 'android-coexist-x86_64.apk'],
+    ['x86', 'android-coexist-x86.apk'],
+  ]),
 ].join('\n');
 
-const iosRow = [
+const iosSection = [
   '### iOS',
   '',
-  `| File | Use it for |`,
-  '| --- | --- |',
-  `| ${file('ios-arm64.ipa')} | iPhone and iPad (arm64). **Unsigned** — sign it with your own Apple ID before installing. |`,
+  '**Unsigned IPA** — sign it with your own Apple ID before installing.',
+  '',
+  archRow([['arm64 — iPhone and iPad', 'ios-arm64.ipa']]),
   '',
   'Use AltStore, SideStore, Sideloadly or Xcode with your own provisioning profile. A free Apple ID cannot use App Groups, so the reading widget and the share extension will be degraded or unavailable; both need a paid team. The bundle ID is `com.bilingify.readest`, so installing over an App Store copy requires removing that copy first.',
 ].join('\n');
@@ -210,15 +240,15 @@ const parts = [
   '',
   'Pick the file that matches your platform and architecture. Every file in this release was built from the same upstream commit and the same patch recipe.',
   '',
-  windowsTable,
+  windowsSection,
   '',
-  macosTable,
+  macosSection,
   '',
-  linuxTable,
+  linuxSection,
   '',
-  androidTable,
+  androidSection,
   '',
-  iosRow,
+  iosSection,
   '',
   verify,
   '',

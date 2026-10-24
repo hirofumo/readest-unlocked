@@ -33,7 +33,7 @@ body:
     attributes:
       label: Version
       description: From the About dialog, or the release tag
-      placeholder: 0.12.16 (v0.12.16-unlocked)
+      placeholder: 0.12.16 (v0.12.16)
     validations:
       required: true
 
