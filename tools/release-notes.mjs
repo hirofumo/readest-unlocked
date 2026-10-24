@@ -104,14 +104,14 @@ const windowsSection = [
   '**Installer** — installs Readest and updates itself in place.',
   '',
   archRow([
-    ['AMD64', 'windows-x64-setup.exe'],
+    ['x86-64', 'windows-x64-setup.exe'],
     ['ARM64', 'windows-arm64-setup.exe'],
   ]),
   '',
   '**Portable** — unzip and run. It does not update itself.',
   '',
   archRow([
-    ['AMD64', 'windows-x64-portable.zip'],
+    ['x86-64', 'windows-x64-portable.zip'],
     ['ARM64', 'windows-arm64-portable.zip'],
   ]),
   '',
