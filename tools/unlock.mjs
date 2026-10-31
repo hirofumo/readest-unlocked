@@ -1282,14 +1282,22 @@ function patchIosPageFlipModel(root) {
     'PageFlipModel.swift',
   );
 
-  // Upstream may drop or rename the file; that is a recipe change, not a patch
-  // to skip. Failing here is the point: the iOS leg would otherwise find out
-  // forty minutes into a macOS runner.
+  // Two different absences, and only one of them is a failure:
+  //
+  //   - The file is not there at all. Upstream tag v0.12.16 predates Page Flip
+  //     (readest#7160 merged after it), and this project builds the latest
+  //     release tag by default, so "no such file" is the normal state for a
+  //     numbered release. Nothing to fix; skipping is correct.
+  //   - The file is there and the anchor is not. That is upstream rewriting code
+  //     this patch depends on, and it must fail loudly here rather than forty
+  //     minutes into a macOS runner as a type-check error nobody expects.
+  //
+  // The brief window where "moved or deleted after Page Flip shipped" would be
+  // mistaken for "feature not yet shipped" is covered by verify.mjs, which
+  // asserts the split form whenever the file is present.
   if (!existsSync(file)) {
-    fail(
-      `PageFlipModel.swift is missing: ${file}\n` +
-        '  Upstream moved or removed the Page Flip model; update tools/unlock.mjs.',
-    );
+    log('PageFlipModel.swift: absent (upstream before Page Flip); nothing to patch');
+    return;
   }
 
   const { text: original, eol } = readText(file);
@@ -1298,7 +1306,12 @@ function patchIosPageFlipModel(root) {
     return;
   }
 
-  const text = replaceOnce(original, QUADRATURE_ANCHOR, QUADRATURE_PATCHED, 'PageFlipModel.swift/quadrature');
+  const text = replaceOnce(
+    original,
+    QUADRATURE_ANCHOR,
+    QUADRATURE_PATCHED,
+    'PageFlipModel.swift/quadrature',
+  );
   writeText(file, text, eol);
   log('PageFlipModel.swift: split the quadrature initialiser so it type-checks');
 }

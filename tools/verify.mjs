@@ -558,7 +558,11 @@ const pageFlipFile = path.join(
 );
 const pageFlipSrc = read(pageFlipFile);
 if (pageFlipSrc === null) {
-  fail(`missing ${pageFlipFile}`);
+  // Upstream tag v0.12.16 predates Page Flip, and the numbered release builds
+  // that tag, so an absent file is a legitimate tree — not a silent skip of a
+  // patch that should have run. Whenever the file *is* there, the assertions
+  // below hold it to the split form.
+  ok('PageFlipModel.swift: absent on this upstream ref (pre-Page Flip); nothing to assert');
 } else {
   const text = lf(pageFlipSrc);
   const start = text.indexOf('private static let quadrature: [Double]');
