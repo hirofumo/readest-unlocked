@@ -537,6 +537,62 @@ for (const [locale, strings] of Object.entries(TRANSLATED_LOCALES)) {
   }
 }
 
+/* 5b. iOS Page Flip model compiles ----------------------------------------- */
+
+// Upstream's Page Flip initialiser is one expression the Swift type checker
+// gives up on ("unable to type-check this expression in reasonable time"), and
+// no upstream CI job ever compiles iOS, so the break only surfaces on this
+// repository's iOS leg. Asserted by shape rather than by trusting unlock.mjs:
+// the value has to be computed in three statements, and the compaction that
+// broke it must not come back.
+const pageFlipFile = path.join(
+  root,
+  'apps',
+  'readest-app',
+  'src-tauri',
+  'plugins',
+  'tauri-plugin-native-bridge',
+  'ios',
+  'Sources',
+  'PageFlipModel.swift',
+);
+const pageFlipSrc = read(pageFlipFile);
+if (pageFlipSrc === null) {
+  fail(`missing ${pageFlipFile}`);
+} else {
+  const text = lf(pageFlipSrc);
+  const start = text.indexOf('private static let quadrature: [Double]');
+  const body = start === -1 ? '' : text.slice(start, text.indexOf('\n  }', start));
+  if (start === -1) {
+    fail('PageFlipModel.swift: the quadrature table is gone; update tools/verify.mjs');
+  } else {
+    if (body.includes('let segment = Double(i / 2) + 0.5')) {
+      ok('PageFlipModel.swift: the quadrature segment index is its own statement');
+    } else {
+      fail('PageFlipModel.swift: the quadrature segment index is not split out');
+    }
+    if (body.includes('let offset = (i % 2 == 0 ? -1.0 : 1.0) * 0.5 / sqrt(3.0)')) {
+      ok('PageFlipModel.swift: the quadrature node offset is its own statement');
+    } else {
+      fail('PageFlipModel.swift: the quadrature node offset is not split out');
+    }
+    if (body.includes('return (segment + offset) / Double(segments)')) {
+      ok('PageFlipModel.swift: the quadrature node divides last');
+    } else {
+      fail('PageFlipModel.swift: the quadrature node is not assembled as expected');
+    }
+    // The exact line the compiler rejected. Its presence means the solver is
+    // back to one hard problem, which is what killed run 41166997111.
+    if (!body.includes('(Double(i / 2) + 0.5 + (i % 2 == 0 ? -1 : 1) * 0.5 / sqrt(3.0)) / Double(segments)')) {
+      ok('PageFlipModel.swift: the single-expression form that failed to type-check is gone');
+    } else {
+      fail(
+        'PageFlipModel.swift still holds the single-expression quadrature initialiser; the iOS leg will not compile',
+      );
+    }
+  }
+}
+
 /* 6. build environment ------------------------------------------------------ */
 
 // The keys unlock.mjs writes and the value each has to hold. `SELF_HOSTED` and

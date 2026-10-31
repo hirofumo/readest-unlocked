@@ -1217,6 +1217,92 @@ function patchAndroidUpdaterKeys(root) {
   }
 }
 
+/* ---------------------------------------- iOS: one expression the compiler gives up on */
+
+/**
+ * Upstream's Page Flip feature (readest#7160) ships a Swift twin of the page
+ * model whose Gauss-Legendre node initialiser fails to compile:
+ *
+ *   PageFlipModel.swift:109:45: error: the compiler is unable to type-check this
+ *   expression in reasonable time
+ *
+ * The expression is one 86-column line that mixes integer division, a `?:`, two
+ * integer-to-Double conversions and a `sqrt()` call. Type checking it requires
+ * the solver to explore every numeric conflation at once; on the toolchain this
+ * repository builds with it exceeds the time limit, so `swift build` aborts and
+ * the whole iOS leg dies.
+ *
+ * Upstream never noticed because readest/readest has no iOS build anywhere in
+ * CI: `nightly.yml` and `release.yml` cut macOS desktop bundles only, and the
+ * IPA is built by the app's own release script on a developer's Mac. This leg is
+ * the only place that file is ever compiled, which is why the break first
+ * appeared here (run 41166997111, upstream 716aada).
+ *
+ * The fix is upstream's own advice — break the expression up — and it is
+ * semantics-preserving: the same value, split across three `let`s so the solver
+ * gets a chain of trivial problems instead of one hard one. `offset` and
+ * `segment` are exactly the two halves of the original line, `Double(i / 2)` is
+ * kept as integer division (the node grid depends on it: Gauss-Legendre gives
+ * two nodes per segment, and `i / 2` is the segment index when the casts are
+ * written out separately), and `... / Double(segments)` stays the last thing
+ * applied.
+ *
+ * The Swift twin is not the only copy of this formula — `pageFlipModel.ts`
+ * (browser) and `PageFlipModel.kt` (Android) carry the same maths — but those
+ * compile fine: TypeScript has no such limit and Kotlin's inference is local.
+ * Only the Swift one needs patching.
+ *
+ * Anchored, like every other patch here: upstream rewriting the line fails the
+ * build loudly at `unlock.mjs` instead of silently at `swift build`.
+ */
+
+const QUADRATURE_ANCHOR = `  private static let quadrature: [Double] = (0..<segments * 2).map { i in
+    (Double(i / 2) + 0.5 + (i % 2 == 0 ? -1 : 1) * 0.5 / sqrt(3.0)) / Double(segments)
+  }`;
+
+const QUADRATURE_PATCHED = `  private static let quadrature: [Double] = (0..<segments * 2).map { i in
+    // ${MARKER} Split so the type checker solves three easy problems instead of
+    // one it gives up on: upstream wrote this as a single 86-column expression
+    // and the swift build timed out on it. Values are unchanged.
+    let segment = Double(i / 2) + 0.5
+    let offset = (i % 2 == 0 ? -1.0 : 1.0) * 0.5 / sqrt(3.0)
+    return (segment + offset) / Double(segments)
+  }`;
+
+function patchIosPageFlipModel(root) {
+  const file = path.join(
+    root,
+    'apps',
+    'readest-app',
+    'src-tauri',
+    'plugins',
+    'tauri-plugin-native-bridge',
+    'ios',
+    'Sources',
+    'PageFlipModel.swift',
+  );
+
+  // Upstream may drop or rename the file; that is a recipe change, not a patch
+  // to skip. Failing here is the point: the iOS leg would otherwise find out
+  // forty minutes into a macOS runner.
+  if (!existsSync(file)) {
+    fail(
+      `PageFlipModel.swift is missing: ${file}\n` +
+        '  Upstream moved or removed the Page Flip model; update tools/unlock.mjs.',
+    );
+  }
+
+  const { text: original, eol } = readText(file);
+  if (original.includes(`${MARKER} Split so the type checker`)) {
+    log('PageFlipModel.swift: quadrature already split (this recipe’s guard)');
+    return;
+  }
+
+  const text = replaceOnce(original, QUADRATURE_ANCHOR, QUADRATURE_PATCHED, 'PageFlipModel.swift/quadrature');
+  writeText(file, text, eol);
+  log('PageFlipModel.swift: split the quadrature initialiser so it type-checks');
+}
+
 /* ------------------------------------------------------- build environment */
 
 /**
@@ -1304,6 +1390,7 @@ patchAboutWindow(root);
 patchServerUrlSetting(root);
 patchAndroidUpdaterKeys(root);
 patchTranslations(root);
+patchIosPageFlipModel(root);
 const skippedCosmetic = patchCosmeticUi(root);
 writeBuildEnv(root);
 
