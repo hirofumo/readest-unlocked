@@ -8,11 +8,13 @@
  * downloadable while the manifests and SHA256SUMS know nothing about it. Users
  * read that as "this platform still exists".
  *
- * The expected names are written out here rather than derived from the release
- * itself, because a derivation cannot notice a leftover — it would simply agree
- * with whatever is there. Changing the release's shape therefore means changing
- * this list, which is the point: the list is the contract, and this check runs
- * before a run stamps new manifests, checksums and provenance over the release.
+ * The expected names live in `release-assets.mjs`, shared with the `detect` job:
+ * a derivation from the release itself cannot notice a leftover — it would
+ * simply agree with whatever is there — and a second hand-written copy would
+ * drift away from this one. Changing the release's shape therefore means
+ * changing that module, which is the point: the list is the contract, and this
+ * check runs before a run stamps new manifests, checksums and provenance over
+ * the release.
  *
  * Two channels are checked with the same contract:
  *
@@ -32,6 +34,8 @@
  *
  * Reads GH_TOKEN / GITHUB_TOKEN when present to raise the rate limit.
  */
+
+import { expectedAssets } from './release-assets.mjs';
 
 const TOKEN = process.env['GH_TOKEN'] ?? process.env['GITHUB_TOKEN'] ?? '';
 
@@ -54,56 +58,6 @@ function arg(name, fallback) {
   return value;
 }
 
-/* ------------------------------------------------------------- the contract */
-
-const WINDOWS_ARCHES = ['x64', 'arm64'];
-const MACOS_VARIANTS = ['x64', 'arm64'];
-const LINUX_ARCHES = ['x64', 'arm64'];
-const ANDROID_FAMILIES = ['replace', 'coexist'];
-// The ABI directory names inside the APK, which is also what the asset names and
-// the workflow's variant names use. The CLI's target names differ for one of
-// them: `-t i686` builds the x86 package.
-const ANDROID_ABIS = ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'];
-
-function contract({ mode, prefix }) {
-  const expected = new Set();
-  const add = (...names) => names.forEach((name) => expected.add(name));
-
-  for (const arch of WINDOWS_ARCHES) {
-    // The installer is the updater artifact, so it is signed; the portable build
-    // is a zip and carries no signature.
-    add(`${prefix}-windows-${arch}-setup.exe`, `${prefix}-windows-${arch}-setup.exe.sig`);
-    add(`${prefix}-windows-${arch}-portable.zip`);
-  }
-  for (const variant of MACOS_VARIANTS) {
-    // The dmg is for humans; the updater artifact is the .app tarball.
-    add(`${prefix}-macos-${variant}.dmg`);
-    add(`${prefix}-macos-${variant}-updater.tar.gz`, `${prefix}-macos-${variant}-updater.tar.gz.sig`);
-  }
-  for (const arch of LINUX_ARCHES) {
-    // The AppImage is itself the updater artifact, so it is signed in place.
-    add(`${prefix}-linux-${arch}.AppImage`, `${prefix}-linux-${arch}.AppImage.sig`);
-    add(`${prefix}-linux-${arch}.deb`, `${prefix}-linux-${arch}.rpm`);
-  }
-  for (const family of ANDROID_FAMILIES) {
-    for (const abi of ANDROID_ABIS) {
-      add(`${prefix}-android-${family}-${abi}.apk`, `${prefix}-android-${family}-${abi}.apk.sig`);
-    }
-  }
-  // iOS: unsigned on purpose, and not an updater target, so no .sig.
-  add(`${prefix}-ios-arm64.ipa`);
-
-  // The release's own documents, written by the pipeline rather than by a leg.
-  add('SHA256SUMS', 'unlock.patch', 'BUILD.md');
-  if (mode === 'nightly') {
-    add('nightly.json', 'nightly-coexist.json');
-  } else {
-    add('latest.json', 'latest-coexist.json', 'release-notes.json');
-  }
-
-  return expected;
-}
-
 /* --------------------------------------------------------------- the check */
 
 async function main() {
@@ -112,6 +66,10 @@ async function main() {
   const mode = arg('mode', 'release');
   const version = arg('version', '');
   const prefix = arg('prefix', '') || `Readest-${version}`;
+  // Same expression the workflow's `detect` job materialises from the secret:
+  // a fork without it never runs the Android legs, so their assets are not part
+  // of that fork's contract and must not be reported as missing.
+  const android = (process.env['HAS_ANDROID_KEY'] ?? 'true') !== 'false';
 
   if (!repo) fail('--repo is required (owner/repo)');
   if (!tag) fail('--tag is required');
@@ -123,7 +81,7 @@ async function main() {
     fail('--prefix is required with --mode nightly');
   }
 
-  const expected = contract({ mode, prefix });
+  const expected = expectedAssets({ mode, prefix, android });
   const headers = {
     Accept: 'application/vnd.github+json',
     'User-Agent': 'readest-unlocked-assets',
@@ -152,7 +110,7 @@ async function main() {
         'Every one of them is a leftover: `--clobber` replaces by name, so nothing removes an\n' +
         'asset that a rebuild stopped producing. Remove them by hand:\n' +
         '  gh release delete-asset <tag> <name> --repo <owner/repo> --yes\n' +
-        'and, if the release really did change shape, update the contract in this script.',
+        'and, if the release really did change shape, update the contract in tools/release-assets.mjs.',
     );
   }
 
@@ -160,7 +118,8 @@ async function main() {
     console.warn(
       `[assets] WARNING: ${missing.length} expected asset(s) are not on the release:\n  ${missing.join('\n  ')}\n` +
         'A failed leg leaves its asset absent, or the previous build in place, and the updater\n' +
-        'manifests report that platform; so this is not fatal on its own.',
+        'manifests report that platform; so this is not fatal on its own. `detect` reads the\n' +
+        'same contract, so the next run rebuilds instead of skipping a release that is short.',
     );
   }
 

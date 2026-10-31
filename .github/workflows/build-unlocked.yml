@@ -1382,6 +1382,11 @@ jobs:
           MODE: ${{ needs.detect.outputs.mode }}
           VERSION: ${{ needs.detect.outputs.version }}
           PREFIX: ${{ needs.detect.outputs.asset_prefix }}
+          # The same contract `detect` reads, so it has to answer the same
+          # question: a fork without the signing secret runs no Android leg and
+          # must not expect Android assets here either. The comparison turns the
+          # step output's empty string (secret absent) into a literal 'false'.
+          HAS_ANDROID_KEY: ${{ needs.detect.outputs.android == 'true' }}
         run: |
           node tools/check-release-assets.mjs \
             --repo "$GITHUB_REPOSITORY" --tag "$TAG" \

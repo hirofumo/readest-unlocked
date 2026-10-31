@@ -8,6 +8,8 @@
  *   INPUT_NIGHTLY    "true" resolves upstream `main` for the daily pre-release
  *   INPUT_REF          workflow_dispatch ref override (tag, branch or sha)
  *   INPUT_FORCE        "true" rebuilds even when the build already exists
+ *   HAS_ANDROID_KEY    "false" means the Android legs will not run, so their
+ *                      assets are not part of this run's contract
  *   GH_TOKEN           optional; raises the GitHub API rate limit
  *   GITHUB_REPOSITORY  owner/repo publishing the releases
  *
@@ -28,18 +30,25 @@
  */
 
 const UPSTREAM = process.env['UPSTREAM_REPO'] ?? 'readest/readest';
+import { missingAssets } from './release-assets.mjs';
+
 const SELF = process.env['GITHUB_REPOSITORY'] ?? '';
 const TOKEN = process.env['GH_TOKEN'] ?? process.env['GITHUB_TOKEN'] ?? '';
 const INPUT_REF = (process.env['INPUT_REF'] ?? '').trim();
 const NIGHTLY = ['true', '1', 'yes'].includes((process.env['INPUT_NIGHTLY'] ?? '').toLowerCase());
 const FORCE = ['true', '1', 'yes'].includes((process.env['INPUT_FORCE'] ?? '').toLowerCase());
+// The `detect` job materialises the Android secret's presence as this boolean
+// string. A fork without it never runs those legs, so their assets are not part
+// of that fork's contract — expecting them would make every run look incomplete
+// and rebuild forever. Absent means "assume yes": the workflow always sets it,
+// and a silent default of "no" would quietly shrink the contract.
+const ANDROID = (process.env['HAS_ANDROID_KEY'] ?? 'true') !== 'false';
 
 const headers = {
   Accept: 'application/vnd.github+json',
   'User-Agent': 'readest-unlocked-build',
   ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
 };
-
 async function get(url) {
   const res = await fetch(url, { headers });
   return res;
@@ -134,20 +143,48 @@ if (FORCE) {
   console.log('[resolve] GITHUB_REPOSITORY is unset: assuming a rebuild is needed');
 } else if (NIGHTLY) {
   // The rolling pre-release keeps only the latest build. Its assets are the
-  // only record of which upstream commit is current, so the commit itself is
-  // the "already built" test: any `Readest-<date>-<sha>-...` asset means this
-  // exact tree is already published.
+  // only record of which upstream commit is current, so the commit is the
+  // "already built" test: `Readest-<date>-<sha>-...` assets mean this exact
+  // tree is already published.
+  //
+  // The commit alone is not enough, though. A leg that failed leaves its asset
+  // absent, and the release then keeps that gap forever: on 2026-10-31 the
+  // NightlyBuild release held 41 of its 42 assets (no IPA) and this check still
+  // answered "already carries <sha>; nothing to do" on every scheduled run —
+  // recovering took a manual `force=true`. So the release has to hold the whole
+  // contract, not just one asset with the right prefix.
   const res = await get(`https://api.github.com/repos/${SELF}/releases/tags/${tag}`);
   if (res.status === 200) {
     const release = await res.json();
-    const pattern = new RegExp(`^Readest-\\d{4}\\.\\d{2}\\.\\d{2}-${shortSha}-`);
-    const present = (release.assets ?? []).some((asset) => pattern.test(asset.name));
-    build = !present;
-    console.log(
-      present
-        ? `[resolve] ${tag} already carries ${shortSha}; nothing to do`
-        : `[resolve] ${tag} does not carry ${shortSha} yet; building it`,
-    );
+    const names = (release.assets ?? []).map((asset) => asset.name);
+    // The date in the asset names is the day the build ran, not today: when
+    // upstream `main` has not moved, yesterday's build is the current one. Read
+    // the prefix back out of the assets instead of assuming `date` (which is
+    // today), or every unchanged day would look like a release missing every
+    // file and rebuild the whole matrix.
+    const pattern = new RegExp(`^(Readest-\\d{4}\\.\\d{2}\\.\\d{2}-${shortSha})-`);
+    const carried = names.map((name) => pattern.exec(name)).find(Boolean);
+    if (!carried) {
+      console.log(`[resolve] ${tag} does not carry ${shortSha} yet; building it`);
+      build = true;
+    } else {
+      // Same contract the `manifest` job asserts, read from the same module so
+      // the two cannot disagree about what a complete release looks like.
+      const existingPrefix = carried[1];
+      const missing = missingAssets({
+        mode: 'nightly',
+        prefix: existingPrefix,
+        android: ANDROID,
+        actual: names,
+      });
+      build = missing.length > 0;
+      console.log(
+        missing.length
+          ? `[resolve] ${tag} carries ${shortSha} but is short ${missing.length} asset(s); rebuilding:\n` +
+              `  ${missing.join('\n  ')}`
+          : `[resolve] ${tag} already carries ${shortSha} (${existingPrefix}) with every asset; nothing to do`,
+      );
+    }
   } else if (res.status === 404) {
     build = true;
   } else {
@@ -155,20 +192,39 @@ if (FORCE) {
     build = true;
   }
 } else {
-  // A version published before the rename still lives under the old tag. Treat
-  // it as published: renaming history would break every link to it, and the new
-  // scheme only needs to hold from the next upstream version on.
+  // Numbered releases, same reasoning as the nightly branch above: a version
+  // published by a run whose iOS leg failed is missing its IPA, and "the tag
+  // exists" alone would then skip that version forever. Rebuilding is safe and
+  // intended — the release tag follows the newest build of the version (§7) —
+  // and the daily 03:00 run retries until the release holds the whole contract.
+  //
+  // Only the current-scheme tag is held to the contract. `v<version>-unlocked`
+  // is the pre-rename identity, kept working so old links do not break; its
+  // asset names predate this contract, so judging it by that contract would
+  // rebuild a release that is complete and unreachable by the updater anyway.
   let published = false;
   for (const candidate of [`v${version}`, `v${version}-unlocked`]) {
     const res = await get(`https://api.github.com/repos/${SELF}/releases/tags/${candidate}`);
-    if (res.status === 200) {
+    if (res.status === 404) continue;
+    if (res.status !== 200) {
+      console.log(`[resolve] could not check ${candidate} (HTTP ${res.status}); building anyway`);
+      continue;
+    }
+    if (candidate !== `v${version}`) {
       published = true;
-      console.log(`[resolve] ${candidate} already exists; nothing to do`);
+      console.log(`[resolve] ${candidate} already exists (pre-rename tag); nothing to do`);
       break;
     }
-    if (res.status !== 404) {
-      console.log(`[resolve] could not check ${candidate} (HTTP ${res.status}); building anyway`);
-    }
+    const names = ((await res.json()).assets ?? []).map((asset) => asset.name);
+    const missing = missingAssets({ mode: 'release', prefix: assetPrefix, android: ANDROID, actual: names });
+    published = missing.length === 0;
+    console.log(
+      missing.length
+        ? `[resolve] ${candidate} exists but is short ${missing.length} asset(s); rebuilding:\n` +
+            `  ${missing.join('\n  ')}`
+        : `[resolve] ${candidate} already exists with every asset; nothing to do`,
+    );
+    if (!missing.length) break;
   }
   build = !published;
 }
