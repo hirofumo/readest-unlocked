@@ -85,6 +85,14 @@ jobs:
       - name: Check the build workflow's publish gate
         run: cd .recipe && node tools/check-workflow.mjs
 
+      # Also about the build, not the patch: upstream can start compiling a crate
+      # that needs a `-dev` package this recipe's Linux legs do not install, and
+      # the only place that shows up is 40 minutes into a build (2026-11-03:
+      # CPAL's `alsa-sys`, #7240). Checked against the checkout this job already
+      # has, so it stays in the cheap job.
+      - name: Check the Linux dependency list still covers the tree
+        run: node .recipe/tools/check-linux-deps.mjs --root "$GITHUB_WORKSPACE"
+
       - name: Record what was checked
         if: always()
         run: |

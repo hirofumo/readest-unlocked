@@ -511,11 +511,27 @@ jobs:
           cargo install tauri-cli --git https://github.com/readest/tauri --rev "$rev" --locked --force
           echo "$rev" > "$marker"
 
+      # This list mirrors upstream's own Linux dependency step (`release.yml` /
+      # `nightly.yml`, "install dependencies (ubuntu only)") and adds what only
+      # this recipe needs on top — currently just `zip`. Upstream's list is the
+      # authority because it is the same sources being compiled: a crate that
+      # needs a `-dev` package there needs it here too.
+      #
+      # The three packages worth naming are the ones added on 2026-11-03:
+      #   libasound2-dev  CPAL's `alsa-sys` build script asks pkg-config for
+      #                   `alsa.pc` and panics when it is missing — upstream's
+      #                   Linux native TTS player links CPAL, so both Linux legs
+      #                   died at `alsa-sys` (TECHNICAL.md §14).
+      #   libclang-dev, g++  SoundTouch's bundled C++ build (bindgen + cc) in
+      #                   that same plugin.
+      # tools/check-linux-deps.mjs asserts this step still covers the crates
+      # upstream's native TTS plugin declares for Linux, so the next such
+      # addition fails in preflight instead of 40 minutes into a release build.
       - name: Install Linux build dependencies (Linux)
         if: matrix.config.release == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libfontconfig-dev libgtk-3-dev libwebkit2gtk-4.1 libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1 libjavascriptcoregtk-4.1-dev gir1.2-javascriptcoregtk-4.1 gir1.2-webkit2-4.1 libappindicator3-dev librsvg2-dev patchelf xdg-utils zip
+          sudo apt-get install -y pkg-config libasound2-dev libclang-dev g++ libfontconfig-dev libgtk-3-dev libwebkit2gtk-4.1 libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1 libjavascriptcoregtk-4.1-dev gir1.2-javascriptcoregtk-4.1 gir1.2-webkit2-4.1 libappindicator3-dev librsvg2-dev patchelf xdg-utils zip
 
       # Chromium dlopens NSS, libpulse and libspeechd by soname; whatever the
       # bundle lacks comes from the host and breaks against the bundled glibc.
