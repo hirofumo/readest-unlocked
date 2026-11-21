@@ -278,6 +278,11 @@ if (runtimeConfig === null) {
       'an address stored before the switch existed still counts as enabled',
       normalized.includes("readStoredSetting(CUSTOM_SERVER_ENABLED_KEY) !== 'false'"),
     ],
+    [
+      "the stored server sits on top of upstream's own config resolution",
+      normalized.includes('const base = window.__READEST_RUNTIME_CONFIG;') ||
+        normalized.includes('const base = window.__READEST_RUNTIME_CONFIG ?? getSavedRuntimeConfig();'),
+    ],
   ];
   for (const [label, passed] of checks) {
     if (passed) ok(label);

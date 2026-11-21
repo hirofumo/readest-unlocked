@@ -453,10 +453,33 @@ const SERVER_ENABLED_KEY = 'readest.serverEnabled';
 
 const RUNTIME_CONFIG_TYPE_ANCHOR = `  apiBaseUrl?: string;`;
 
-const RUNTIME_CONFIG_ANCHOR = `export const getRuntimeConfig = () =>
-  typeof window === 'undefined' ? undefined : window.__READEST_RUNTIME_CONFIG;`;
+/**
+ * getRuntimeConfig has two shapes in the wild, because the two channels build
+ * from different upstream refs: a release tag still carries the single
+ * expression, while main falls back to the config the previous page load saved
+ * (a cached load can run a chunk before /runtime-config.js).
+ *
+ * One recipe serves both, so it accepts either shape and keeps whichever body
+ * upstream wrote — `base` below — underneath the stored server override.
+ */
+const RUNTIME_CONFIG_VARIANTS = [
+  {
+    // upstream main, after the cached-load fix
+    anchor: `export const getRuntimeConfig = () =>
+  typeof window === 'undefined'
+    ? undefined
+    : (window.__READEST_RUNTIME_CONFIG ?? getSavedRuntimeConfig());`,
+    base: 'window.__READEST_RUNTIME_CONFIG ?? getSavedRuntimeConfig()',
+  },
+  {
+    // release tags before that fix
+    anchor: `export const getRuntimeConfig = () =>
+  typeof window === 'undefined' ? undefined : window.__READEST_RUNTIME_CONFIG;`,
+    base: 'window.__READEST_RUNTIME_CONFIG',
+  },
+];
 
-const RUNTIME_CONFIG_REPLACEMENT = `// ${MARKER} keys shared with the Settings entry in MiscPanel.
+const runtimeConfigReplacement = (base) => `// ${MARKER} keys shared with the Settings entry in MiscPanel.
 export const CUSTOM_SERVER_URL_KEY = '${SERVER_URL_KEY}';
 export const CUSTOM_SERVER_ANON_KEY = '${SERVER_ANON_KEY}';
 export const CUSTOM_SERVER_ENABLED_KEY = '${SERVER_ENABLED_KEY}';
@@ -502,7 +525,9 @@ export const getCustomServerConfig = (): ReadestRuntimeConfig | null => {
 
 export const getRuntimeConfig = (): ReadestRuntimeConfig | undefined => {
   if (typeof window === 'undefined') return undefined;
-  const base = window.__READEST_RUNTIME_CONFIG;
+  // Whatever upstream resolves on its own — on a cached load that is the config
+  // the last page load saved — the stored server still wins.
+  const base = ${base};
   const custom = getCustomServerConfig();
   if (!custom) return base;
   return { ...base, ...custom };
@@ -808,10 +833,23 @@ function patchServerUrlSetting(root) {
   if (configSource.includes(`${MARKER} keys shared with the Settings entry`)) {
     log('runtimeConfig.ts: server override already present');
   } else {
+    const variant = RUNTIME_CONFIG_VARIANTS.find((candidate) =>
+      configSource.includes(candidate.anchor),
+    );
+    if (!variant) {
+      fail(
+        'runtimeConfig.ts/getRuntimeConfig: anchor not found in any known shape. ' +
+          'Upstream changed this code; update tools/unlock.mjs.\n' +
+          RUNTIME_CONFIG_VARIANTS.map(
+            (candidate) =>
+              `  --- expected anchor ---\n${candidate.anchor}\n  -----------------------`,
+          ).join('\n'),
+      );
+    }
     configSource = replaceOnce(
       configSource,
-      RUNTIME_CONFIG_ANCHOR,
-      RUNTIME_CONFIG_REPLACEMENT,
+      variant.anchor,
+      runtimeConfigReplacement(variant.base),
       'runtimeConfig.ts/getRuntimeConfig',
     );
     log('runtimeConfig.ts: a configured server redirects the API, the Node API and the account backend');
