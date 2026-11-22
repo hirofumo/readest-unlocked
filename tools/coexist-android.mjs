@@ -143,6 +143,42 @@ const pruneEmpty = (dir) => {
 };
 pruneEmpty(genDir);
 
+/* 2b. move the Rust side's JNI symbols to the same package ------------------ */
+
+/**
+ * A native method is resolved by symbol name, and that name carries the
+ * package: `Java_<package, dots as underscores>_<Class>_<method>`. Rewriting
+ * only the Kotlin half leaves the library answering to the old package, so
+ * the first call fails with an `UnsatisfiedLinkError` — and upstream's
+ * `MainActivity.isEinkDevice()` is called at the top of `onCreate`, before
+ * anything a user can see.
+ */
+const jniSymbol = (id) => `Java_${id.split('.').join('_')}_`;
+if (from.includes('_') || to.includes('_')) {
+  // JNI escapes a literal underscore in the class name as `_1`; rather than
+  // half-support that, refuse the rename.
+  fail(`a package id with an underscore cannot be rewritten into a JNI symbol: ${from} -> ${to}`);
+}
+const fromJni = jniSymbol(from);
+const toJni = jniSymbol(to);
+const rustRoot = path.join(root, 'apps', 'readest-app', 'src-tauri', 'src');
+if (!existsSync(rustRoot)) fail(`missing ${rustRoot}`);
+
+let jniSymbols = 0;
+const jniFiles = [];
+for (const file of walk(rustRoot)) {
+  if (path.extname(file).toLowerCase() !== '.rs') continue;
+  const text = readFileSync(file, 'utf8');
+  const occurrences = text.split(fromJni).length - 1;
+  if (occurrences === 0) continue;
+  writeFileSync(file, text.split(fromJni).join(toJni), 'utf8');
+  jniSymbols += occurrences;
+  jniFiles.push(path.relative(root, file));
+}
+if (jniSymbols) {
+  log(`moved ${jniSymbols} JNI symbol(s) to ${toJni}* in ${jniFiles.join(', ')}`);
+}
+
 /* 3. assert the project really is the other family's now -------------------- */
 
 const leftovers = walk(genDir).filter((file) => isText(file) && readFileSync(file, 'utf8').includes(from));
@@ -168,4 +204,15 @@ if (!readFileSync(mainActivity, 'utf8').includes(`package ${to}`)) {
   fail(`MainActivity.kt does not declare package ${to}`);
 }
 
-log(`project identity is now ${to} (namespace, MainActivity and test sources)`);
+const jniLeftovers = walk(rustRoot).filter(
+  (file) =>
+    path.extname(file).toLowerCase() === '.rs' && readFileSync(file, 'utf8').includes(fromJni),
+);
+if (jniLeftovers.length) {
+  fail(
+    `these Rust files still export JNI symbols for ${from}:\n  ` +
+      jniLeftovers.map((file) => path.relative(root, file)).join('\n  '),
+  );
+}
+
+log(`project identity is now ${to} (namespace, MainActivity, test sources and JNI symbols)`);

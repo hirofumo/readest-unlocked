@@ -985,6 +985,13 @@ jobs:
           fi
           echo "$apk declares $pkg"
 
+          # A native method is resolved by symbol name, and that name carries the
+          # package. #14 was a coexist build whose Kotlin half had moved to the
+          # new id while the Rust exports had not: every device crashed on
+          # launch and this job still passed. Read the library back, because
+          # nothing about a green build says which half moved.
+          node .recipe/tools/check-android-jni.mjs --apk "$apk" --package "$want" --root .
+
           # `tauri android build` does not sign the APK itself — the upload step
           # signs for the updater. This is a different signature: the Android
           # one, which decides whether the APK installs at all.
