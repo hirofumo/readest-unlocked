@@ -602,6 +602,55 @@ if (pageFlipSrc === null) {
   }
 }
 
+/* 5c. iOS on-device LLM compiles ------------------------------------------- */
+
+// Upstream's on-device LLM bridge names `LanguageModelError` under
+// `#available(iOS 27.0, *)`. `#available` is a run-time answer, so naming a type
+// that only the iOS 27 SDK declares is a compile error against the iOS 26 SDK
+// the macOS runner image carries — and no upstream CI job compiles iOS, so it
+// only ever surfaces on this repository's iOS leg (run 45109570453). The
+// assertion is that the reference is gone, not that a particular replacement
+// text is present, so a future upstream guard that keeps the case still passes
+// as long as it compiles.
+const onDeviceLlmFile = path.join(
+  root,
+  'apps',
+  'readest-app',
+  'src-tauri',
+  'plugins',
+  'tauri-plugin-native-bridge',
+  'ios',
+  'Sources',
+  'OnDeviceLLM.swift',
+);
+const onDeviceLlmSrc = read(onDeviceLlmFile);
+if (onDeviceLlmSrc === null) {
+  // The numbered release builds an upstream tag; the bridge (readest#7806) is
+  // newer than some of them, so an absent file is a legitimate tree.
+  ok('OnDeviceLLM.swift: absent on this upstream ref (pre-on-device-LLM); nothing to assert');
+} else {
+  const text = lf(onDeviceLlmSrc);
+  if (!text.includes('error as? LanguageModelError')) {
+    ok('OnDeviceLLM.swift: the iOS 27-only error type is not named under #available');
+  } else {
+    fail(
+      'OnDeviceLLM.swift still names LanguageModelError, which the iOS 26 SDK does not declare; the iOS leg will not compile',
+    );
+  }
+  // The iOS 26 branch is the only one this build can reach, so dropping the
+  // iOS 27 hop must not have taken it out as well.
+  if (text.includes('case .exceededContextWindowSize = error')) {
+    ok('OnDeviceLLM.swift: the iOS 26 overflow case is still checked');
+  } else {
+    fail('OnDeviceLLM.swift: the iOS 26 overflow case is gone; the patch removed more than it should');
+  }
+  if (text.includes(`// ${MARKER} iOS 27's LanguageModelError`)) {
+    ok('OnDeviceLLM.swift: the dropped branch says why it was dropped');
+  } else {
+    fail('OnDeviceLLM.swift: the iOS 27 branch was removed without a note saying why');
+  }
+}
+
 /* 6. build environment ------------------------------------------------------ */
 
 // The keys unlock.mjs writes and the value each has to hold. `SELF_HOSTED` and

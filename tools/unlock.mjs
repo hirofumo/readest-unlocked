@@ -1354,6 +1354,110 @@ function patchIosPageFlipModel(root) {
   log('PageFlipModel.swift: split the quadrature initialiser so it type-checks');
 }
 
+/* ------------------------- iOS: an error type the 26 SDK does not declare */
+
+/**
+ * Upstream's on-device LLM bridge (readest#7806) gates its FoundationModels use
+ * with `#if canImport(FoundationModels)` and then names an iOS 27-only type
+ * under `#available`:
+ *
+ *   if #available(iOS 27.0, *), let error = error as? LanguageModelError,
+ *
+ * `#available` is answered at run time; the type it names still has to exist
+ * when the file is compiled. The macOS runner image (macos-26-arm64, Xcode 26)
+ * carries the iOS 26 SDK, where `LanguageModelError` is not declared at all, so
+ * the Swift package build dies with
+ *
+ *   OnDeviceLLM.swift:146:57: error: cannot find type 'LanguageModelError' in scope
+ *
+ * and takes the entire iOS leg with it (run 45109570453). Upstream has no iOS
+ * job in CI — same blind spot as the Page Flip type-check timeout — so it
+ * cannot see this, and nothing tells us it will be fixed soon.
+ *
+ * The patch drops that one branch. What is lost: on iOS 27+ an overflow is no
+ * longer recognised as "the text is too long" and is reported through
+ * Foundation's own description instead — the request still fails either way.
+ * What is kept: the iOS 26 path, which is the only FoundationModels surface a
+ * build made here can actually reach. Properly guarding the type needs a
+ * compile-time check (`#if canImport(FoundationModels, _version: ...)`), which
+ * would require knowing the SDK's internal version number; guessing it is worse
+ * than not having the branch.
+ *
+ * When upstream guards it, or upstream's own build moves on, the anchor stops
+ * matching and this file fails loudly — that is the signal to revisit the patch.
+ * `OnDeviceLLM.swift` does not exist on the release tags this project also
+ * builds, so its absence is a normal tree, not a skipped patch (same border as
+ * PageFlipModel.swift).
+ */
+
+const ON_DEVICE_LLM_ANCHOR = `    /// iOS 26 reports an overflow as a session GenerationError, iOS 27 as a LanguageModelError.
+    @available(iOS 26.0, *)
+    private static func isContextOverflow(_ error: Error) -> Bool {
+      if let error = error as? LanguageModelSession.GenerationError,
+        case .exceededContextWindowSize = error
+      {
+        return true
+      }
+      if #available(iOS 27.0, *), let error = error as? LanguageModelError,
+        case .contextSizeExceeded = error
+      {
+        return true
+      }
+      return false
+    }`;
+
+const ON_DEVICE_LLM_PATCHED = `    // iOS 26 reports an overflow as a session GenerationError.
+    // ${MARKER} iOS 27's LanguageModelError, which upstream also matched here, is
+    // declared in the iOS 27 SDK only, and this build compiles against the iOS
+    // 26 SDK: naming it is a hard error there ("cannot find type ... in scope")
+    // and \`#available\` cannot gate a type. Dropping the branch costs the
+    // friendlier "text is too long" message on iOS 27+; the request still fails,
+    // with Foundation's own description. Re-adding it needs a compile-time
+    // guard, not \`#available\`.
+    @available(iOS 26.0, *)
+    private static func isContextOverflow(_ error: Error) -> Bool {
+      if let error = error as? LanguageModelSession.GenerationError,
+        case .exceededContextWindowSize = error
+      {
+        return true
+      }
+      return false
+    }`;
+
+function patchIosOnDeviceLlm(root) {
+  const file = path.join(
+    root,
+    'apps',
+    'readest-app',
+    'src-tauri',
+    'plugins',
+    'tauri-plugin-native-bridge',
+    'ios',
+    'Sources',
+    'OnDeviceLLM.swift',
+  );
+
+  if (!existsSync(file)) {
+    log('OnDeviceLLM.swift: absent (upstream before the on-device LLM bridge); nothing to patch');
+    return;
+  }
+
+  const { text: original, eol } = readText(file);
+  if (original.includes(`${MARKER} iOS 27's LanguageModelError`)) {
+    log('OnDeviceLLM.swift: iOS 27 overflow branch already dropped (this recipe’s guard)');
+    return;
+  }
+
+  const text = replaceOnce(
+    original,
+    ON_DEVICE_LLM_ANCHOR,
+    ON_DEVICE_LLM_PATCHED,
+    'OnDeviceLLM.swift/ios27-overflow',
+  );
+  writeText(file, text, eol);
+  log('OnDeviceLLM.swift: dropped the iOS 27 overflow branch the 26 SDK cannot compile');
+}
+
 /* ------------------------------------------------------- build environment */
 
 /**
@@ -1442,6 +1546,7 @@ patchServerUrlSetting(root);
 patchAndroidUpdaterKeys(root);
 patchTranslations(root);
 patchIosPageFlipModel(root);
+patchIosOnDeviceLlm(root);
 const skippedCosmetic = patchCosmeticUi(root);
 writeBuildEnv(root);
 
